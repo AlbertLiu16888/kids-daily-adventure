@@ -48,34 +48,42 @@ setInterval(tickClock, 30000);
 tickClock();
 
 // --- Map ---
+const MAP_POS = {
+  qingtang:     { x: 14, y: 28 },
+  kindergarten: { x: 48, y: 28 },
+  nursery:      { x: 84, y: 30 },
+  beach:        { x: 15, y: 76 },
+  dinomountain: { x: 48, y: 80 },
+  office:       { x: 83, y: 78 },
+};
+
 function renderMap() {
-  const grid = $('#map-grid');
-  grid.innerHTML = '';
+  const hotspots = $('#map-hotspots');
+  hotspots.innerHTML = '';
   const candies = getCandies();
   const done = getDoneToday();
   LOCATIONS.forEach(loc => {
-    const card = document.createElement('button');
-    card.className = 'place-card';
-    card.dataset.color = loc.color;
-    if (!isOpen(loc)) card.classList.add('closed');
+    const pos = MAP_POS[loc.id];
+    if (!pos) return;
+    const btn = document.createElement('button');
+    btn.className = 'hotspot';
+    btn.dataset.color = loc.color;
+    btn.style.left = pos.x + '%';
+    btn.style.top = pos.y + '%';
+    if (pos.y > 50) btn.classList.add('bottom-row');
+    btn.setAttribute('aria-label', loc.name);
+    if (!isOpen(loc)) btn.classList.add('closed');
     const allDone = loc.tasks.every(t => done.includes(t.id));
-    card.innerHTML = `
-      <div class="emoji">${loc.emoji}</div>
-      <div class="name">${loc.name}</div>
-      <div class="hours">${fmtHours(loc)}</div>
-      ${allDone ? '<div class="done-badge">✓ 完成</div>' : ''}
+    if (allDone) btn.classList.add('done');
+    btn.innerHTML = `
+      <span class="hotspot-moon">💤</span>
+      <span class="hotspot-label">${loc.name}<span class="hours-small">${fmtHours(loc)}</span></span>
     `;
-    card.addEventListener('click', () => {
+    btn.addEventListener('click', () => {
       sfxTap(); hapTap();
-      if (!isOpen(loc)) {
-        $('#sleep-text').textContent = `這裡要 ${fmtHours(loc)} 才開放唷！`;
-        $('#sleep-overlay').classList.remove('hidden');
-        speak(`這裡在 ${loc.hours[0]} 點到 ${loc.hours[1]} 點才開放唷`);
-        return;
-      }
       enterLocation(loc.id);
     });
-    grid.appendChild(card);
+    hotspots.appendChild(btn);
   });
 
   // candy count chip
@@ -124,7 +132,23 @@ function enterLocation(locId) {
   currentLoc = findLocation(locId);
   currentTask = null;
   progress = 0;
+  const preview = !isOpen(currentLoc);
+  $('#scene').classList.toggle('preview-mode', preview);
   $('#scene-title').textContent = `${currentLoc.emoji} ${currentLoc.name}`;
+  let banner = $('#preview-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'preview-banner';
+    banner.className = 'preview-banner';
+    $('#scene').insertBefore(banner, $('#scene-bg'));
+  }
+  if (preview) {
+    banner.innerHTML = `🌙 這裡現在還在休息 — 請 <b>${fmtHours(currentLoc)}</b> 再來完成任務喔！`;
+    banner.style.display = 'block';
+    setTimeout(() => speak(`${currentLoc.name}現在還在休息，請${currentLoc.hours[0]}點到${currentLoc.hours[1]}點之間再來完成任務喔`), 400);
+  } else {
+    banner.style.display = 'none';
+  }
   const bg = $('#scene-bg');
   bg.style.background = currentLoc.bgFallback;
   bg.style.backgroundSize = 'cover';
@@ -278,11 +302,21 @@ function handleHit(targetEl) {
 }
 
 function completeTask() {
+  const preview = !isOpen(currentLoc);
+  if (preview) {
+    sfxSuccess();
+    speak(`做得好！不過這裡要${currentLoc.hours[0]}點到${currentLoc.hours[1]}點才能真正完成任務喔，記得再來玩`);
+    setTimeout(() => {
+      const i = currentLoc.tasks.findIndex(t => t.id === currentTask.id);
+      const next = currentLoc.tasks[(i + 1) % currentLoc.tasks.length];
+      if (next) selectTask(next.id);
+    }, 1400);
+    return;
+  }
   speak(currentTask.success);
   markDone(currentTask.id);
   renderTaskList();
 
-  // Check if all tasks done in location -> candy reward
   const done = getDoneToday();
   const allDone = currentLoc.tasks.every(t => done.includes(t.id));
   if (allDone) {
