@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#ffe0ec" />
+<title>仙貝與旺旺龍的每日探險</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="assets/images/ui/ui_logo.png" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div id="app" class="app">
+
+  <!-- Splash -->
+  <section id="splash" class="screen active">
+    <div class="splash-wrap">
+      <div class="splash-logo">
+        <img src="assets/images/ui/ui_logo.png" alt="logo" class="logo-img" onerror="this.style.display='none'" />
+        <h1>仙貝與旺旺龍的<br/>每日探險</h1>
+      </div>
+      <div class="splash-chars">
+        <div class="char-card">
+          <img src="assets/images/animals/char_sanbei.png" alt="仙貝" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'emoji-xl',textContent:'👧'}))" />
+          <span>仙貝</span>
+        </div>
+        <div class="char-card">
+          <img src="assets/images/animals/char_wangwang.png" alt="旺旺龍" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'emoji-xl',textContent:'👦'}))" />
+          <span>旺旺龍</span>
+        </div>
+      </div>
+      <button id="start-btn" class="big-btn">🎈 開始冒險</button>
+    </div>
+  </section>
+
+  <!-- Map -->
+  <section id="map" class="screen">
+    <header class="topbar">
+      <div class="clock" id="clock">🕐 --:--</div>
+      <button class="icon-btn" id="open-backpack" aria-label="背包">
+        <img src="assets/images/ui/ui_backpack.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'🎒',style:'font-size:36px'}))" />
+      </button>
+    </header>
+
+    <div class="map-hero">
+      <img src="assets/images/map/map_main.png" alt="主地圖" class="map-img" onerror="this.style.display='none'" />
+    </div>
+
+    <div class="map-grid" id="map-grid"></div>
+
+    <footer class="bottom-settings">
+      <button class="chip" id="toggle-bgm">🎵 音樂</button>
+      <button class="chip" id="toggle-voice">🗣 語音</button>
+      <button class="chip" id="toggle-haptic">📳 震動</button>
+    </footer>
+  </section>
+
+  <!-- Scene -->
+  <section id="scene" class="screen">
+    <header class="topbar">
+      <button class="icon-btn" id="back-to-map" aria-label="返回">⬅️</button>
+      <div class="scene-title" id="scene-title">地點</div>
+      <div class="scene-progress" id="scene-progress">0 / 3</div>
+    </header>
+    <div class="scene-bg" id="scene-bg">
+      <div class="scene-stage" id="scene-stage"></div>
+    </div>
+    <div class="task-list" id="task-list"></div>
+    <div class="prop-tray" id="prop-tray"></div>
+  </section>
+
+  <!-- Backpack -->
+  <section id="backpack" class="screen">
+    <header class="topbar">
+      <button class="icon-btn" id="back-from-bp" aria-label="返回">⬅️</button>
+      <div class="scene-title">🎒 糖果背包</div>
+      <div></div>
+    </header>
+    <div class="candy-grid" id="candy-grid"></div>
+    <div class="total-line" id="total-line"></div>
+  </section>
+
+  <!-- Reward overlay -->
+  <div id="reward-overlay" class="overlay hidden">
+    <div class="reward-box">
+      <div class="reward-candy" id="reward-candy"></div>
+      <div class="reward-text" id="reward-text">你好棒！</div>
+      <button class="big-btn" id="reward-close">謝謝</button>
+    </div>
+  </div>
+
+  <!-- Sleeping overlay -->
+  <div id="sleep-overlay" class="overlay hidden">
+    <div class="reward-box">
+      <div class="big-emoji">🌙💤</div>
+      <div class="reward-text" id="sleep-text">這裡在睡覺中，記得 08:00 再來玩唷！</div>
+      <button class="big-btn" id="sleep-close">好的</button>
+    </div>
+  </div>
+
+  <!-- Done-today overlay -->
+  <div id="done-overlay" class="overlay hidden">
+    <div class="reward-box">
+      <div class="big-emoji">✨🎁</div>
+      <div class="reward-text">你今天已經完成這個任務囉！<br/>明天再來玩～</div>
+      <button class="big-btn" id="done-close">好</button>
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="js/app.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>

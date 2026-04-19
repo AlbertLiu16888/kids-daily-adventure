@@ -1,0 +1,13 @@
+{
+  "name": "仙貝與旺旺龍的每日探險",
+  "short_name": "每日探險",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fff7fb",
+  "theme_color": "#ffb4d6",
+  "description": "給 2~4 歲小朋友的每日互動探索遊戲",
+  "icons": [
+    { "src": "assets/images/ui/ui_logo.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
