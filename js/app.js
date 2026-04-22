@@ -1,4 +1,4 @@
-import { LOCATIONS, findLocation, findTask } from './scenes.js';
+import { LOCATIONS, findLocation, findTask, LOCATION_EGG } from './scenes.js';
 import {
   getCandies, addCandy, getDoneToday, markDone, isDoneToday,
   getSettings, setSetting,
@@ -9,6 +9,11 @@ import {
   startBgm, stopBgm, speak,
 } from './audio.js';
 import { hapTap, hapSuccess, hapCandy } from './haptics.js';
+import { TASK_DIALOG, PET_DAILY, dialogFor } from './dialogs.js';
+import {
+  PET_META, HATCH_NEEDS,
+  getEggs, getPets, addEgg, interactEgg, interactPet, petDayIndex,
+} from './pets.js';
 
 // --- Helpers ---
 function $(sel, root=document) { return root.querySelector(sel); }
@@ -48,10 +53,15 @@ setInterval(tickClock, 30000);
 tickClock();
 
 // --- Map ---
+// Positions over map_main.png. The existing image has 6 landmarks; the 2 new
+// locations sit in the middle-left / middle-right empty band until the map is
+// regenerated to a 4x2 layout.
 const MAP_POS = {
-  qingtang:     { x: 14, y: 28 },
-  kindergarten: { x: 48, y: 28 },
-  nursery:      { x: 84, y: 30 },
+  qingtang:     { x: 14, y: 26 },
+  kindergarten: { x: 48, y: 26 },
+  nursery:      { x: 84, y: 28 },
+  zoo:          { x: 30, y: 52 },
+  sheepworld:   { x: 70, y: 52 },
   beach:        { x: 15, y: 76 },
   dinomountain: { x: 48, y: 80 },
   office:       { x: 83, y: 78 },
@@ -90,6 +100,8 @@ function renderMap() {
   const totalCandies = Object.values(candies).reduce((a,b)=>a+b,0);
   const bp = $('#open-backpack');
   if (totalCandies > 0) bp.setAttribute('data-count', totalCandies);
+  else bp.removeAttribute('data-count');
+  renderNestBadge();
 
   // Settings chips
   const s = getSettings();
@@ -209,7 +221,8 @@ function selectTask(taskId) {
   renderTaskList();
   renderStage();
   renderPropTray();
-  speak(currentTask.prompt);
+  const opener = dialogFor(currentTask.id, 0, currentTask.needs) || currentTask.prompt;
+  speak(opener);
 }
 
 function renderStage() {
@@ -298,22 +311,26 @@ function handleHit(targetEl) {
   progress++;
   if (progress >= currentTask.needs) {
     completeTask();
+  } else {
+    const line = dialogFor(currentTask.id, progress, currentTask.needs);
+    if (line) speak(line);
   }
 }
 
 function completeTask() {
+  const endLine = dialogFor(currentTask.id, currentTask.needs, currentTask.needs) || currentTask.success;
   const preview = !isOpen(currentLoc);
   if (preview) {
     sfxSuccess();
-    speak(`做得好！不過這裡要${currentLoc.hours[0]}點到${currentLoc.hours[1]}點才能真正完成任務喔，記得再來玩`);
+    speak(`${endLine}  不過這裡要${currentLoc.hours[0]}點到${currentLoc.hours[1]}點才能真正完成任務喔`);
     setTimeout(() => {
       const i = currentLoc.tasks.findIndex(t => t.id === currentTask.id);
       const next = currentLoc.tasks[(i + 1) % currentLoc.tasks.length];
       if (next) selectTask(next.id);
-    }, 1400);
+    }, 1600);
     return;
   }
-  speak(currentTask.success);
+  speak(endLine);
   markDone(currentTask.id);
   renderTaskList();
 
@@ -329,32 +346,51 @@ function completeTask() {
   }
 }
 
+const CANDY_MAP = {
+  green:  { emoji:'🟢', img:'assets/images/candies/candy_green.png',  name:'綠糖果' },
+  yellow: { emoji:'🟡', img:'assets/images/candies/candy_yellow.png', name:'黃糖果' },
+  orange: { emoji:'🟠', img:'assets/images/candies/candy_orange.png', name:'橘糖果' },
+  blue:   { emoji:'🔵', img:'assets/images/candies/candy_blue.png',   name:'藍糖果' },
+  red:    { emoji:'🔴', img:'assets/images/candies/candy_red.png',    name:'紅糖果' },
+  purple: { emoji:'🟣', img:'assets/images/candies/candy_purple.png', name:'紫糖果' },
+  pink:   { emoji:'🩷', img:'assets/images/candies/candy_pink.png',   name:'粉紅糖' },
+  teal:   { emoji:'🟢', img:'assets/images/candies/candy_teal.png',   name:'薄荷糖' },
+};
+
 function giveCandy() {
   const candies = addCandy(currentLoc.color);
   sfxCandy(); hapCandy();
-  speak('恭喜你拿到糖果了！');
-  const candyMap = {
-    green:  { emoji:'🟢', img:'assets/images/candies/candy_green.png',  name:'綠糖果' },
-    yellow: { emoji:'🟡', img:'assets/images/candies/candy_yellow.png', name:'黃糖果' },
-    orange: { emoji:'🟠', img:'assets/images/candies/candy_orange.png', name:'橘糖果' },
-    blue:   { emoji:'🔵', img:'assets/images/candies/candy_blue.png',   name:'藍糖果' },
-    red:    { emoji:'🔴', img:'assets/images/candies/candy_red.png',    name:'紅糖果' },
-    purple: { emoji:'🟣', img:'assets/images/candies/candy_purple.png', name:'紫糖果' },
-  };
-  const c = candyMap[currentLoc.color];
+  const c = CANDY_MAP[currentLoc.color] || { emoji:'🍬', img:'', name:'糖果' };
   const box = $('#reward-candy');
   box.innerHTML = `<img src="${c.img}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${c.emoji}',style:'font-size:120px'}))" />`;
   $('#reward-text').innerHTML = `你完成所有任務了！<br/>獲得一顆 <b>${c.name}</b>！`;
   $('#reward-overlay').classList.remove('hidden');
+  speak('恭喜你拿到糖果了！');
 
-  // If all 6 colors collected today, show rainbow
-  const allColors = Object.values(candies).every(v => v>0);
+  // Chance to also drop an egg (40%)
+  const eggType = LOCATION_EGG[currentLoc.id];
+  if (eggType && Math.random() < 0.4) {
+    setTimeout(() => openEggReward(eggType), 1400);
+  }
+
+  // Rainbow celebration when all 8 collected
+  const allColors = Object.keys(CANDY_MAP).every(k => (candies[k]||0) > 0);
   if (allColors) {
     setTimeout(() => {
-      $('#reward-text').innerHTML = '🌈 彩虹糖果大滿貫！你是最棒的小探險家！';
-      speak('彩虹糖果大滿貫！你是最棒的小探險家！');
-    }, 1500);
+      $('#reward-text').innerHTML = '🌈 八色糖果大滿貫！你是最棒的小探險家！';
+      speak('八色糖果大滿貫！你是最棒的小探險家！');
+    }, 1800);
   }
+}
+
+function openEggReward(type) {
+  const { egg } = addEgg(type);
+  const meta = PET_META[type];
+  const box = $('#egg-img');
+  box.innerHTML = `<img src="${meta.egg}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'🥚',style:'font-size:120px'}))" />`;
+  $('#egg-text').innerHTML = `撿到一顆<b>${meta.name}</b>的蛋！<br/>帶去 🪺 小窩，每天噴水、曬太陽幫它孵化！`;
+  $('#egg-overlay').classList.remove('hidden');
+  speak(`哇！你撿到一顆${meta.name}的蛋，帶去小窩照顧它吧`);
 }
 
 $('#reward-close').addEventListener('click', () => {
@@ -389,6 +425,8 @@ function renderBackpack() {
     blue:   { img:'assets/images/candies/candy_blue.png',   emoji:'🔵', name:'海邊藍糖', source:'海邊' },
     red:    { img:'assets/images/candies/candy_red.png',    emoji:'🔴', name:'恐龍紅糖', source:'恐龍山' },
     purple: { img:'assets/images/candies/candy_purple.png', emoji:'🟣', name:'辦公紫糖', source:'辦公室' },
+    pink:   { img:'assets/images/candies/candy_pink.png',   emoji:'🩷', name:'動物粉糖', source:'動物園' },
+    teal:   { img:'assets/images/candies/candy_teal.png',   emoji:'🟢', name:'羊羊薄荷', source:'羊世界' },
   };
   let total = 0;
   Object.entries(candyMap).forEach(([k, v]) => {
@@ -408,5 +446,267 @@ function renderBackpack() {
   });
   $('#total-line').textContent = `總共收集 ${total} 顆糖果 🎉`;
 }
+
+// --- Nest (eggs & pets) ---
+let nestTab = 'eggs';
+function renderNestBadge() {
+  const eggs = Object.keys(getEggs()).length;
+  const pets = Object.keys(getPets()).length;
+  const total = eggs + pets;
+  const btn = $('#open-nest');
+  if (total > 0) btn.setAttribute('data-count', total);
+  else btn.removeAttribute('data-count');
+}
+
+function renderNest() {
+  const body = $('#nest-body');
+  body.innerHTML = '';
+  if (nestTab === 'eggs') {
+    const eggs = getEggs();
+    const ids = Object.keys(eggs);
+    if (!ids.length) {
+      body.innerHTML = '<div class="nest-empty">還沒有撿到蛋～完成任務有機會獲得！</div>';
+      return;
+    }
+    ids.forEach(id => {
+      const e = eggs[id];
+      const meta = PET_META[e.type];
+      const cell = document.createElement('button');
+      cell.className = 'nest-cell';
+      cell.innerHTML = `
+        <img src="${meta.egg}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'🥚',style:'font-size:64px'}))" />
+        <div class="name">${meta.name}的蛋</div>
+        <div class="progress-row"><span>💧 ${e.water}/${HATCH_NEEDS.water}</span><span>☀️ ${e.sun}/${HATCH_NEEDS.sun}</span></div>
+      `;
+      cell.addEventListener('click', () => { sfxTap(); hapTap(); openEggView(id); });
+      body.appendChild(cell);
+    });
+  } else {
+    const pets = getPets();
+    const ids = Object.keys(pets);
+    if (!ids.length) {
+      body.innerHTML = '<div class="nest-empty">還沒有小寵物～先去孵蛋吧！</div>';
+      return;
+    }
+    ids.forEach(id => {
+      const p = pets[id];
+      const meta = PET_META[p.type];
+      const dayIdx = petDayIndex(p);
+      const fr = Array.from({length: 5}, (_,i) => i < Math.min(5, Math.round(p.friendship/2)) ? '❤' : '🤍').join('');
+      const cell = document.createElement('button');
+      cell.className = 'nest-cell';
+      cell.innerHTML = `
+        <img src="${meta.pet}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${meta.emoji}',style:'font-size:64px'}))" />
+        <div class="name">${meta.name}</div>
+        <div class="pet-fr">${fr.split('').map(e=>`<span>${e}</span>`).join('')}</div>
+        <div class="progress-row"><span>第 ${dayIdx+1} 天</span></div>
+      `;
+      cell.addEventListener('click', () => { sfxTap(); hapTap(); openPetView(id); });
+      body.appendChild(cell);
+    });
+  }
+}
+
+$$('.nest-tab').forEach(t => {
+  t.addEventListener('click', () => {
+    sfxTap(); hapTap();
+    nestTab = t.dataset.tab;
+    $$('.nest-tab').forEach(x => x.classList.toggle('active', x === t));
+    renderNest();
+  });
+});
+$('#open-nest').addEventListener('click', () => {
+  sfxTap(); hapTap();
+  nestTab = 'eggs';
+  $$('.nest-tab').forEach(x => x.classList.toggle('active', x.dataset.tab === 'eggs'));
+  renderNest();
+  show('nest');
+});
+$('#back-from-nest').addEventListener('click', () => {
+  sfxTap(); hapTap();
+  renderMap();
+  show('map');
+});
+$('#egg-close').addEventListener('click', () => {
+  sfxTap(); hapTap();
+  $('#egg-overlay').classList.add('hidden');
+  renderMap();
+});
+$('#hatch-close').addEventListener('click', () => {
+  sfxTap(); hapTap();
+  $('#hatch-overlay').classList.add('hidden');
+  nestTab = 'pets';
+  $$('.nest-tab').forEach(x => x.classList.toggle('active', x.dataset.tab === 'pets'));
+  renderNest();
+  show('nest');
+});
+
+// --- Pet detail (3D rotation + actions) ---
+let viewMode = null; // 'egg' | 'pet'
+let viewId = null;
+let rotY = 0, rotX = 0;
+
+function applyRot() {
+  $('#pet-3d').style.transform = `rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+}
+
+// Rebuild the pet image node — avoids the stale-ref bug where a 404 onerror
+// replaces <img id="pet-img"> with an emoji span, and a later update then
+// tries to set .src on a node that no longer exists.
+function setPetImg(src, fallbackEmoji) {
+  const stage3d = $('#pet-3d');
+  stage3d.innerHTML = '';
+  const img = document.createElement('img');
+  img.id = 'pet-img';
+  img.alt = '';
+  img.onerror = () => {
+    const span = document.createElement('span');
+    span.textContent = fallbackEmoji;
+    span.style.fontSize = '200px';
+    img.replaceWith(span);
+  };
+  img.src = src;
+  stage3d.appendChild(img);
+}
+
+function bindPetDrag() {
+  const stage = $('#pet-stage');
+  let dragging = false, lastX=0, lastY=0;
+  stage.onpointerdown = e => { dragging = true; lastX = e.clientX; lastY = e.clientY; stage.setPointerCapture(e.pointerId); };
+  stage.onpointermove = e => {
+    if (!dragging) return;
+    rotY += (e.clientX - lastX) * 0.6;
+    rotX = Math.max(-45, Math.min(45, rotX - (e.clientY - lastY) * 0.4));
+    lastX = e.clientX; lastY = e.clientY;
+    applyRot();
+  };
+  stage.onpointerup = stage.onpointercancel = () => { dragging = false; };
+}
+
+function openEggView(id) {
+  const eggs = getEggs();
+  const e = eggs[id];
+  if (!e) return;
+  viewMode = 'egg';
+  viewId = id;
+  const meta = PET_META[e.type];
+  $('#petview-title').textContent = `🥚 ${meta.name}的蛋`;
+  setPetImg(meta.egg, '🥚');
+  rotY = 0; rotX = 0; applyRot();
+  renderPetInfo();
+  renderPetActions();
+  bindPetDrag();
+  show('petview');
+  speak('拖動蛋可以 360 度觀察喔，每天幫它噴水和曬太陽會慢慢孵化');
+}
+
+function openPetView(id) {
+  const pets = getPets();
+  const p = pets[id];
+  if (!p) return;
+  viewMode = 'pet';
+  viewId = id;
+  const meta = PET_META[p.type];
+  $('#petview-title').textContent = `${meta.emoji} ${meta.name}`;
+  setPetImg(meta.pet, meta.emoji);
+  rotY = 0; rotX = 0; applyRot();
+  const { pet, isNewDay } = interactPet(id);
+  const dayIdx = petDayIndex(pet);
+  const dailyLine = PET_DAILY[dayIdx % PET_DAILY.length];
+  setTimeout(() => speak(dailyLine), 400);
+  renderPetInfo();
+  renderPetActions();
+  bindPetDrag();
+  show('petview');
+}
+
+function renderPetInfo() {
+  const info = $('#pet-info');
+  if (viewMode === 'egg') {
+    const e = getEggs()[viewId];
+    if (!e) return;
+    info.innerHTML = `孵化進度：💧 ${e.water}/${HATCH_NEEDS.water} ・ ☀️ ${e.sun}/${HATCH_NEEDS.sun}<br/><small>一天每樣最多 2 次，隔天再來就能繼續喔</small>`;
+  } else {
+    const p = getPets()[viewId];
+    if (!p) return;
+    const meta = PET_META[p.type];
+    const dayIdx = petDayIndex(p);
+    const fr = Array.from({length:5}, (_,i) => i < Math.min(5, Math.round(p.friendship/2)) ? '❤' : '🤍').join('');
+    info.innerHTML = `${meta.name} ・ 第 ${dayIdx+1} 天 <span class="fr-bar">${fr.split('').map(e=>`<span>${e}</span>`).join('')}</span>`;
+  }
+}
+
+function renderPetActions() {
+  const bar = $('#pet-actions');
+  bar.innerHTML = '';
+  if (viewMode === 'egg') {
+    const waterBtn = document.createElement('button');
+    waterBtn.className = 'act-water';
+    waterBtn.innerHTML = '💧 噴水';
+    waterBtn.addEventListener('click', () => doInteract('water'));
+    const sunBtn = document.createElement('button');
+    sunBtn.className = 'act-sun';
+    sunBtn.innerHTML = '☀️ 照光';
+    sunBtn.addEventListener('click', () => doInteract('sun'));
+    bar.append(waterBtn, sunBtn);
+  } else {
+    const pat = document.createElement('button');
+    pat.className = 'act-pat';
+    pat.innerHTML = '🫶 摸摸';
+    pat.addEventListener('click', () => {
+      sfxTap(); hapTap();
+      const p = getPets()[viewId];
+      const meta = PET_META[p.type];
+      const tick = document.createElement('span');
+      tick.textContent = '💖';
+      tick.style.cssText = 'position:absolute;font-size:38px;pointer-events:none;animation:pet-hatch 1s ease-out';
+      const stage = $('#pet-stage');
+      tick.style.left = '50%'; tick.style.top = '30%'; tick.style.transform = 'translateX(-50%)';
+      stage.appendChild(tick);
+      setTimeout(()=>tick.remove(), 1000);
+      speak(`${meta.name}喵嗚～好舒服`);
+    });
+    bar.append(pat);
+  }
+}
+
+function doInteract(kind) {
+  sfxTap(); hapTap();
+  const r = interactEgg(viewId, kind);
+  if (!r.ok) {
+    if (r.reason === 'daily-limit') {
+      speak(kind === 'water' ? '今天水已經夠囉，明天再來噴' : '今天太陽也曬夠啦，明天再一起');
+    }
+    return;
+  }
+  sfxSuccess(); hapSuccess();
+  if (r.hatched) {
+    const petId = r.hatched.petId;
+    const pet = getPets()[petId];
+    const meta = PET_META[pet.type];
+    viewMode = 'pet';
+    viewId = petId;
+    setPetImg(meta.pet, meta.emoji);
+    $('#pet-3d').classList.remove('hatch-anim'); void $('#pet-3d').offsetWidth; $('#pet-3d').classList.add('hatch-anim');
+    $('#petview-title').textContent = `${meta.emoji} ${meta.name}`;
+    $('#hatch-img').innerHTML = `<img src="${meta.pet}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${meta.emoji}',style:'font-size:140px'}))" />`;
+    $('#hatch-text').innerHTML = `歡迎 <b>${meta.name}</b> 加入你的小窩！`;
+    $('#hatch-overlay').classList.remove('hidden');
+    sfxCandy(); hapCandy();
+    speak(`叮咚！${meta.name}孵出來了，歡迎新朋友`);
+    renderPetInfo();
+    renderPetActions();
+    renderNestBadge();
+    return;
+  }
+  renderPetInfo();
+  speak(kind === 'water' ? '水滋潤了一下，蛋蛋舒服地晃了晃' : '陽光暖暖的，蛋蛋在發光');
+}
+
+$('#back-from-petview').addEventListener('click', () => {
+  sfxTap(); hapTap();
+  renderNest();
+  show('nest');
+});
 
 // --- Init: if splash has been skipped last time, still show splash each time (kids love it) ---

@@ -1,7 +1,12 @@
-// Scenes / locations data. Positions are in percent of .scene-bg
-// Each task has: id, label, emoji, prompt (voice), prop (type),
-// targets (array of {emoji/img, x%, y%, accepts:propType, needs:count}),
-// successLine (voice)
+// Scenes / locations data. Positions are in percent of .scene-bg.
+// Each task:
+//   id, label, emoji,
+//   prompt (first voice, spoken when task starts),
+//   dialog: { start, midEach, midLast, end }  // continuity thread
+//   prop { type, emoji, img }
+//   targets [{ id, emoji, img, x, y, accepts }]
+//   needs  (how many successful drops to complete)
+// Each location has `eggType` that may drop on full completion.
 
 export const LOCATIONS = [
   {
@@ -303,7 +308,119 @@ export const LOCATIONS = [
       },
     ],
   },
+  // --- v2: 動物園 ---
+  {
+    id: 'zoo',
+    name: '動物園',
+    emoji: '🐼',
+    color: 'pink',
+    candyEmoji: '🩷',
+    hours: [8, 18],
+    bg: 'assets/images/locations/bg_zoo.png',
+    bgFallback: 'linear-gradient(180deg, #ffe0ec 0%, #ffc8dd 100%)',
+    bgEmoji: '🦁',
+    tasks: [
+      {
+        id: 'zoo_panda',
+        label: '餵熊貓',
+        emoji: '🐼',
+        prompt: '把竹子給熊貓圓圓！',
+        success: '圓圓最愛竹子了！',
+        prop: { type:'bamboo', emoji:'🎋', img:'assets/images/props/item_bamboo.png' },
+        targets: [
+          { id:'panda', emoji:'🐼', img:'assets/images/animals/animal_panda.png', x:28, y:60, accepts:'bamboo' },
+        ],
+        needs: 3,
+      },
+      {
+        id: 'zoo_giraffe',
+        label: '餵長頸鹿',
+        emoji: '🦒',
+        prompt: '把胡蘿蔔舉高給長頸鹿！',
+        success: '咔滋咔滋～好甜！',
+        prop: { type:'carrot', emoji:'🥕', img:'assets/images/props/item_carrot.png' },
+        targets: [
+          { id:'giraffe', emoji:'🦒', img:'assets/images/animals/animal_giraffe.png', x:55, y:45, accepts:'carrot' },
+        ],
+        needs: 3,
+      },
+      {
+        id: 'zoo_croc',
+        label: '拔蛀牙',
+        emoji: '🐊',
+        prompt: '小心用夾子幫鱷魚拔蛀牙！',
+        success: '哈！牙齒不痛囉！',
+        prop: { type:'pliers', emoji:'🪛', img:'assets/images/props/item_pliers.png' },
+        targets: [
+          { id:'croc', emoji:'🐊', img:'assets/images/animals/animal_crocodile.png', x:75, y:65, accepts:'pliers' },
+        ],
+        needs: 2,
+      },
+    ],
+  },
+  // --- v2: 羊世界 ---
+  {
+    id: 'sheepworld',
+    name: '羊世界',
+    emoji: '🐑',
+    color: 'teal',
+    candyEmoji: '🟢',
+    hours: [8, 17],
+    bg: 'assets/images/locations/bg_sheepworld.png',
+    bgFallback: 'linear-gradient(180deg, #d8f3e6 0%, #b3e4c7 100%)',
+    bgEmoji: '🐑',
+    tasks: [
+      {
+        id: 'sheep_feed',
+        label: '餵小羊',
+        emoji: '🌾',
+        prompt: '把牧草給小羊咩咩！',
+        success: '咩～吃得好開心！',
+        prop: { type:'grass', emoji:'🌾', img:'assets/images/props/item_grass.png' },
+        targets: [
+          { id:'lamb', emoji:'🐑', img:'assets/images/animals/animal_sheep.png', x:25, y:65, accepts:'grass' },
+        ],
+        needs: 3,
+      },
+      {
+        id: 'sheep_train',
+        label: '坐小火車',
+        emoji: '🚂',
+        prompt: '投硬幣讓小火車開動！',
+        success: '嗚～出發囉！',
+        prop: { type:'coin', emoji:'🪙', img:'assets/images/props/item_coin.png' },
+        targets: [
+          { id:'train', emoji:'🚂', x:50, y:60, accepts:'coin' },
+        ],
+        needs: 2,
+      },
+      {
+        id: 'sheep_capybara',
+        label: '餵水豚',
+        emoji: '🦫',
+        prompt: '把飼料給水豚大哥！',
+        success: '呼～飽飽好舒服！',
+        prop: { type:'feed', emoji:'🥣', img:'assets/images/props/item_animal_feed.png' },
+        targets: [
+          { id:'capy', emoji:'🦫', img:'assets/images/animals/animal_capybara.png', x:75, y:65, accepts:'feed' },
+        ],
+        needs: 3,
+      },
+    ],
+  },
 ];
+
+// Which egg may drop when a location is fully cleared today.
+export const LOCATION_EGG = {
+  qingtang:     'duck',
+  kindergarten: 'bear',
+  nursery:      'bunny',
+  beach:        'crab',
+  dinomountain: 'dino',
+  office:       'bird',
+  zoo:          'panda',
+  sheepworld:   'sheep',
+};
 
 export function findLocation(id) {
   return LOCATIONS.find(l => l.id === id);

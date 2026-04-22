@@ -15,7 +15,7 @@ export function getCandies() {
   catch { return defaultCandies(); }
 }
 function defaultCandies() {
-  return { green:0, yellow:0, orange:0, blue:0, red:0, purple:0 };
+  return { green:0, yellow:0, orange:0, blue:0, red:0, purple:0, pink:0, teal:0 };
 }
 export function addCandy(color) {
   const c = getCandies();

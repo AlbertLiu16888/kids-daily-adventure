@@ -111,6 +111,63 @@ IMAGES = [
     ("ui/ui_backpack.png", P("A pink backpack with a big front pocket and a cute smiling face, two shoulder straps")),
     ("ui/ui_star.png",     P("A yellow star with a happy face and a sparkle highlight")),
     ("ui/ui_logo.png",     P("A game logo illustration: a pink paper banner with a rainbow arc above six small candies in a row, star sparkles around, children's app style")),
+
+    # --- v2 expansion ---
+    # New map with 8 landmarks
+    ("map/map_main.png", P(
+        "Top-down whimsical adventure map for toddlers showing eight distinct location landmarks connected by winding rainbow pastel paths, arranged as four landmarks on the top row and four on the bottom row, evenly spaced and clearly visible. "
+        "Top row left-to-right: a green pond park with baby ducks on a lily pad; a bright yellow kindergarten building with a red heart above the door; an orange nursery with a rainbow slide; a hot-pink zoo entrance arch decorated with bamboo and flowers with a baby panda peeking and a giraffe head above. "
+        "Bottom row left-to-right: a blue sandy beach with a sandcastle and a palm tree; a red-brown dinosaur mountain with a smiling triceratops; a mint-green open meadow farm with three fluffy white sheep and a tiny red locomotive on curved tracks; a pastel purple office building with a clock tower. "
+        "Each landmark sits on its own little oval grass island, connected by pastel pink and blue winding paths. Sunny sky with fluffy clouds and a big rainbow arc across the top. Spacious, well-organized layout, not cluttered.",
+        SCENE_BG, "16:9"
+    )),
+    # Zoo + Sheep world backgrounds
+    ("locations/bg_zoo.png", P(
+        "Interior of a cozy zoo scene, a round pink entrance arch in the back decorated with bamboo and flowers, a chubby smiling baby panda sitting on grass holding a bamboo stick on the left, a tall giggly long-neck giraffe with blonde mane in the center reaching up to leaves, a friendly green baby crocodile lying on the right with its mouth open showing one stained tooth, blue sunny sky, fluffy clouds, soft flower beds in foreground",
+        SCENE_BG, "16:9"
+    )),
+    ("locations/bg_sheepworld.png", P(
+        "Cheerful open meadow farm, three fluffy cloud-white baby sheep grazing on the left, a tiny colorful mini-train track curving through the scene with a cute bright red locomotive, a chubby brown capybara sitting on the right near a wooden feeding trough, wooden fence along the edge, a windmill in the distance, soft green grass, sunny sky, rainbow arc",
+        SCENE_BG, "16:9"
+    )),
+    # New animals
+    ("animals/animal_panda.png",     P("A chubby baby panda sitting upright, round body, big black eye patches, pink blush cheeks, holding a bamboo stick, smiling, chibi")),
+    ("animals/animal_giraffe.png",   P("A friendly baby giraffe standing sideways, yellow body with large brown rounded spots, long soft neck, blonde mane tuft, big sparkly eyes, happy, chibi")),
+    ("animals/animal_crocodile.png", P("A smiling green baby crocodile lying down with rounded snout open wide, one tooth stained dark, small white teeth, orange tongue, big friendly eyes, not scary, chibi")),
+    ("animals/animal_sheep.png",     P("A fluffy cloud-white baby lamb, tiny pink ears and hooves, big round black eyes, pink blush cheeks, standing on grass, chibi")),
+    ("animals/animal_capybara.png",  P("A chubby brown capybara sitting upright, squinty happy closed eyes, tiny round ears, small hands on tummy, kawaii chibi")),
+    # New props
+    ("props/item_bamboo.png",       P("A fresh green bamboo stalk with a few jade leaves, bright color, a dew drop highlight")),
+    ("props/item_carrot.png",       P("A bright orange carrot with three small green leaves on top, cute sticker style")),
+    ("props/item_pliers.png",       P("Cartoon pliers with pink handles for pulling teeth, rounded edges, metallic shiny jaws, sparkle, cute")),
+    ("props/item_grass.png",        P("A small bundle of fresh green hay tied with a pink ribbon")),
+    ("props/item_coin.png",         P("A shiny golden star-shaped coin with a tiny smiling face and sparkles")),
+    ("props/item_animal_feed.png",  P("A small paper bag with a rolled top, brown feed pellets spilling out, a paw print label on the bag")),
+    # Eggs
+    ("pets/egg_duck.png",  P("A glossy pastel yellow egg with tiny white duckling wings peeking from a small crack on top, shiny highlight, sticker style, plain white background")),
+    ("pets/egg_dino.png",  P("A pastel green egg with darker green rounded spots and a small crack on top hinting at dino scales, glossy, sticker style, plain white background")),
+    ("pets/egg_panda.png", P("A pure white egg with two round black patches like panda eye markings, a tiny green bamboo leaf sprouting from the top crack, glossy, sticker style, plain white background")),
+    ("pets/egg_sheep.png", P("A pale pink egg wrapped in a fluffy cloud-like wool tuft on top, soft pastel, glossy, sticker style, plain white background")),
+    ("pets/egg_bear.png",  P("A creamy beige egg with two small round brown bear-ear shaped bumps on top, glossy, sticker style, plain white background")),
+    ("pets/egg_bunny.png", P("A soft pink egg with two long upright bunny-ear shaped bumps on top, small heart on front, glossy, sticker style, plain white background")),
+    ("pets/egg_crab.png",  P("A coral orange egg with two tiny red claw-shaped bumps on the sides, sparkles, glossy, sticker style, plain white background")),
+    ("pets/egg_bird.png",  P("A lavender purple egg with a small music note emblem in front and a tiny yellow feather on top, glossy, sticker style, plain white background")),
+    # Pets (hatched babies)
+    ("pets/pet_duck.png",   P("A tiny yellow baby duckling standing facing camera, round tummy, orange beak open happily, tiny wings up, chibi, plain pastel background")),
+    ("pets/pet_dino.png",   P("A tiny light-green baby dinosaur with round head, stubby legs, pink blush cheeks, smile, chibi, plain pastel background")),
+    ("pets/pet_panda.png",  P("A tiny baby panda sitting, round body, big sparkling eyes, holding a mini bamboo stalk, chibi, plain pastel background")),
+    ("pets/pet_sheep.png",  P("A tiny fluffy lamb, cloud-like body, tiny pink legs, smiling, chibi, plain pastel background")),
+    ("pets/pet_bear.png",   P("A tiny honey-brown bear cub sitting upright, round ears, big happy eyes, paw raised, chibi, plain pastel background")),
+    ("pets/pet_bunny.png",  P("A tiny pink bunny with long ears, sparkly eyes, hugging a small carrot, chibi, plain pastel background")),
+    ("pets/pet_crab.png",   P("A tiny red crab, huggable round body, tiny claws raised, big friendly eyes, chibi, plain pastel background")),
+    ("pets/pet_bird.png",   P("A tiny lavender cuckoo bird, perched, tiny yellow beak singing, little music notes around, chibi, plain pastel background")),
+    # UI for nest
+    ("ui/ui_nest.png",   P("A cute woven straw nest icon with a pastel pink egg inside and a sparkle on top, flat sticker style")),
+    ("ui/icon_water.png",P("A cute water drop with a smiling face and a small blue splash at the bottom, sticker style")),
+    ("ui/icon_sun.png",  P("A cheerful pastel yellow sun icon with a happy smiling face and soft rounded rays, sticker style")),
+    # Candies for 2 new locations
+    ("candies/candy_pink.png", P("A round bubblegum pink hard candy with a shiny white highlight, twisted clear wrapper ends, sticker style")),
+    ("candies/candy_teal.png", P("A round mint teal hard candy with a shiny white highlight, twisted clear wrapper ends, sticker style")),
 ]
 
 

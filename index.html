@@ -37,9 +37,14 @@
   <section id="map" class="screen">
     <header class="topbar">
       <div class="clock" id="clock">🕐 --:--</div>
-      <button class="icon-btn" id="open-backpack" aria-label="背包">
-        <img src="assets/images/ui/ui_backpack.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'🎒',style:'font-size:36px'}))" />
-      </button>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="open-nest" aria-label="蛋與寵物">
+          <img src="assets/images/ui/ui_nest.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'🪺',style:'font-size:30px'}))" />
+        </button>
+        <button class="icon-btn" id="open-backpack" aria-label="背包">
+          <img src="assets/images/ui/ui_backpack.png" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'🎒',style:'font-size:36px'}))" />
+        </button>
+      </div>
     </header>
 
     <div class="map-hero">
@@ -80,6 +85,56 @@
     <div class="candy-grid" id="candy-grid"></div>
     <div class="total-line" id="total-line"></div>
   </section>
+
+  <!-- Nest (eggs & pets) -->
+  <section id="nest" class="screen">
+    <header class="topbar">
+      <button class="icon-btn" id="back-from-nest" aria-label="返回">⬅️</button>
+      <div class="scene-title">🪺 蛋與小寵物</div>
+      <div></div>
+    </header>
+    <div class="nest-tabs">
+      <button class="nest-tab active" data-tab="eggs">🥚 蛋</button>
+      <button class="nest-tab" data-tab="pets">🐾 寵物</button>
+    </div>
+    <div class="nest-body" id="nest-body"></div>
+  </section>
+
+  <!-- Pet detail (3D rotatable) -->
+  <section id="petview" class="screen">
+    <header class="topbar">
+      <button class="icon-btn" id="back-from-petview" aria-label="返回">⬅️</button>
+      <div class="scene-title" id="petview-title">小寵物</div>
+      <div></div>
+    </header>
+    <div class="pet-stage" id="pet-stage">
+      <div class="pet-3d" id="pet-3d">
+        <img id="pet-img" alt="" />
+      </div>
+    </div>
+    <div class="pet-info" id="pet-info"></div>
+    <div class="pet-actions" id="pet-actions"></div>
+  </section>
+
+  <!-- Egg hatch overlay -->
+  <div id="hatch-overlay" class="overlay hidden">
+    <div class="reward-box hatch-box">
+      <div class="big-emoji">✨ 孵出來了！ ✨</div>
+      <div class="reward-candy" id="hatch-img"></div>
+      <div class="reward-text" id="hatch-text">歡迎新朋友！</div>
+      <button class="big-btn" id="hatch-close">好棒！</button>
+    </div>
+  </div>
+
+  <!-- Egg drop overlay -->
+  <div id="egg-overlay" class="overlay hidden">
+    <div class="reward-box">
+      <div class="big-emoji">🎁</div>
+      <div class="reward-candy" id="egg-img"></div>
+      <div class="reward-text" id="egg-text">你撿到一顆蛋！</div>
+      <button class="big-btn" id="egg-close">太好了！</button>
+    </div>
+  </div>
 
   <!-- Reward overlay -->
   <div id="reward-overlay" class="overlay hidden">
