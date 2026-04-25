@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 generation_log.json
 node_modules/
+.claude/

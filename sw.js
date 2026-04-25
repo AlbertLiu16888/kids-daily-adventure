@@ -1,4 +1,7 @@
-const CACHE = 'kda-v1';
+// Bump on every release that ships JS/CSS changes — the activate handler
+// deletes any caches whose key !== CACHE, so a version bump here cleanly
+// invalidates the old shell on next visit.
+const CACHE = 'kda-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -10,6 +13,11 @@ const ASSETS = [
   './js/drag.js',
   './js/audio.js',
   './js/haptics.js',
+  './js/dialogs.js',
+  './js/pets.js',
+  './js/profile.js',
+  './js/cloud.js',
+  './js/pet3d.js',
 ];
 
 self.addEventListener('install', e => {
@@ -28,6 +36,10 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  // Skip cross-origin: jsonblob.com (cloud sync) and unpkg.com (three.js CDN)
+  // must always hit the network so we don't serve stale snapshots / modules.
+  const url = new URL(e.request.url);
+  if (url.origin !== self.location.origin) return;
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(resp => {
       const copy = resp.clone();

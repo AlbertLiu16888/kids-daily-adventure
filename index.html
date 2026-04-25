@@ -12,24 +12,30 @@
 <body>
 <div id="app" class="app">
 
-  <!-- Splash -->
+  <!-- Splash / Profile select -->
   <section id="splash" class="screen active">
     <div class="splash-wrap">
       <div class="splash-logo">
         <img src="assets/images/ui/ui_logo.png" alt="logo" class="logo-img" onerror="this.style.display='none'" />
         <h1>仙貝與旺旺龍的<br/>每日探險</h1>
       </div>
-      <div class="splash-chars">
-        <div class="char-card">
+      <div class="splash-hint" id="splash-hint">請選擇你是誰？</div>
+      <div class="splash-chars" id="splash-chars">
+        <button class="char-card" data-profile="sanbei" aria-label="仙貝">
+          <div class="char-glow" aria-hidden="true"></div>
           <img src="assets/images/animals/char_sanbei.png" alt="仙貝" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'emoji-xl',textContent:'👧'}))" />
-          <span>仙貝</span>
-        </div>
-        <div class="char-card">
+          <span class="char-name">仙貝</span>
+          <span class="char-tick" aria-hidden="true">✓</span>
+        </button>
+        <button class="char-card" data-profile="wangwang" aria-label="旺旺龍">
+          <div class="char-glow" aria-hidden="true"></div>
           <img src="assets/images/animals/char_wangwang.png" alt="旺旺龍" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'emoji-xl',textContent:'👦'}))" />
-          <span>旺旺龍</span>
-        </div>
+          <span class="char-name">旺旺龍</span>
+          <span class="char-tick" aria-hidden="true">✓</span>
+        </button>
       </div>
-      <button id="start-btn" class="big-btn">🎈 開始冒險</button>
+      <div class="splash-cloud" id="splash-cloud">☁️ 同步中…</div>
+      <button id="start-btn" class="big-btn" disabled>🎈 開始冒險</button>
     </div>
   </section>
 

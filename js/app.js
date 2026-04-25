@@ -2,6 +2,9 @@ import { LOCATIONS, findLocation, findTask, LOCATION_EGG } from './scenes.js';
 import {
   getCandies, addCandy, getDoneToday, markDone, isDoneToday,
   getSettings, setSetting,
+  getFeed, addFeed, spendFeed,
+  hasClaimedDailyReward, markDailyRewardClaimed,
+  resetTasksForReplay,
 } from './state.js';
 import { makeDraggable } from './drag.js';
 import {
@@ -13,7 +16,11 @@ import { TASK_DIALOG, PET_DAILY, dialogFor } from './dialogs.js';
 import {
   PET_META, HATCH_NEEDS,
   getEggs, getPets, addEgg, interactEgg, interactPet, petDayIndex,
+  eggCrackStage,
 } from './pets.js';
+import { PROFILES, getActiveProfile, setActiveProfile } from './profile.js';
+import { pullProfile, flushPush, onSyncChange } from './cloud.js';
+import { mountPet3D, unmountPet3D, wigglePet3D, setEggProgress } from './pet3d.js';
 
 // --- Helpers ---
 function $(sel, root=document) { return root.querySelector(sel); }
@@ -22,23 +29,94 @@ function show(id) {
   $$('.screen').forEach(s => s.classList.remove('active'));
   $('#'+id).classList.add('active');
 }
-function isOpen(loc) {
-  const h = new Date().getHours();
-  return h >= loc.hours[0] && h < loc.hours[1];
-}
+// All locations are always open now (per kids' request — no time gating).
+// We keep `loc.hours` only as a hint shown next to the chip.
+function isOpen(_loc) { return true; }
 function fmtHours(loc) {
   const [a,b] = loc.hours;
   const pad = n => String(n).padStart(2,'0');
   return `${pad(a)}:00–${pad(b)}:00`;
 }
 
-// --- Splash ---
+// --- Splash: profile select ---
+let pendingProfile = null;
+
+function syncStatus(state) {
+  const el = $('#splash-cloud');
+  if (!el) return;
+  const map = {
+    idle:           '',
+    pulling:        '☁️ 正在從雲端讀取…',
+    'no-cloud-data':'☁️ 雲端尚未有紀錄，將以本機開始',
+    pushing:        '☁️ 同步中…',
+    synced:         '☁️ 已同步',
+    offline:        '📴 暫時離線（之後會自動同步）',
+  };
+  el.textContent = map[state] ?? '';
+  el.dataset.state = state ?? '';
+}
+
+onSyncChange(syncStatus);
+syncStatus('idle');
+
+$$('#splash-chars .char-card').forEach(card => {
+  card.addEventListener('click', async () => {
+    const id = card.dataset.profile;
+    if (!id) return;
+    sfxTap(); hapTap();
+    pendingProfile = id;
+    // Selection ring effect
+    $$('#splash-chars .char-card').forEach(c => c.classList.toggle('selected', c === card));
+    $('#start-btn').disabled = true;
+    $('#splash-hint').textContent = `${PROFILES[id].name} 你好！正在讀取雲端紀錄…`;
+    setActiveProfile(id);
+    // Pull cloud snapshot before letting them in
+    await pullProfile(id);
+    $('#start-btn').disabled = false;
+    $('#splash-hint').textContent = `${PROFILES[id].name} 準備好了！按 🎈 開始`;
+    speak(`${PROFILES[id].name}你好！按開始冒險就可以出發了`);
+  });
+});
+
+// If profile was already chosen before (returning visit), pre-select it.
+{
+  const a = getActiveProfile();
+  if (a) {
+    const card = document.querySelector(`#splash-chars .char-card[data-profile="${a.id}"]`);
+    if (card) card.classList.add('selected');
+    pendingProfile = a.id;
+    $('#start-btn').disabled = true;
+    $('#splash-hint').textContent = `${a.name}，正在讀取雲端紀錄…`;
+    pullProfile(a.id).then(() => {
+      $('#start-btn').disabled = false;
+      $('#splash-hint').textContent = `${a.name} 準備好了！按 🎈 開始`;
+    });
+  }
+}
+
 $('#start-btn').addEventListener('click', () => {
+  if (!getActiveProfile()) {
+    $('#splash-hint').textContent = '請先選擇是仙貝還是旺旺龍喔～';
+    return;
+  }
   sfxTap(); hapTap();
   renderMap();
   show('map');
   startBgm('default');
-  speak('歡迎來探險！');
+  const a = getActiveProfile();
+  speak(`歡迎${a?.name || '小朋友'}來探險！`);
+});
+
+// Push pending state when the page is hidden / closed so other devices see it.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    const a = getActiveProfile();
+    if (a) flushPush(a.id);
+  }
+});
+window.addEventListener('beforeunload', () => {
+  const a = getActiveProfile();
+  if (a) flushPush(a.id);
 });
 
 // --- Clock tick ---
@@ -82,12 +160,16 @@ function renderMap() {
     btn.style.top = pos.y + '%';
     if (pos.y > 50) btn.classList.add('bottom-row');
     btn.setAttribute('aria-label', loc.name);
-    if (!isOpen(loc)) btn.classList.add('closed');
     const allDone = loc.tasks.every(t => done.includes(t.id));
+    const claimed = hasClaimedDailyReward(loc.id);
     if (allDone) btn.classList.add('done');
+    if (claimed) btn.classList.add('claimed');
+    const stateBadge = claimed
+      ? '<span class="hotspot-stamp">✅ 今日已領</span>'
+      : '<span class="hotspot-stamp">🎁 可領獎</span>';
     btn.innerHTML = `
-      <span class="hotspot-moon">💤</span>
-      <span class="hotspot-label">${loc.name}<span class="hours-small">${fmtHours(loc)}</span></span>
+      ${stateBadge}
+      <span class="hotspot-label">${loc.name}</span>
     `;
     btn.addEventListener('click', () => {
       sfxTap(); hapTap();
@@ -102,12 +184,51 @@ function renderMap() {
   if (totalCandies > 0) bp.setAttribute('data-count', totalCandies);
   else bp.removeAttribute('data-count');
   renderNestBadge();
+  renderProfileChip();
+  renderFeedChip();
 
   // Settings chips
   const s = getSettings();
   $('#toggle-bgm').classList.toggle('off', !s.bgm);
   $('#toggle-voice').classList.toggle('off', !s.voice);
   $('#toggle-haptic').classList.toggle('off', !s.vibration);
+}
+
+// Top-bar chips: profile avatar + feed count
+function renderProfileChip() {
+  const a = getActiveProfile();
+  if (!a) return;
+  let chip = $('#profile-chip');
+  if (!chip) {
+    chip = document.createElement('button');
+    chip.id = 'profile-chip';
+    chip.className = 'profile-chip';
+    chip.title = '切換玩家';
+    chip.addEventListener('click', () => {
+      sfxTap(); hapTap();
+      // Back to splash to switch profile
+      const a = getActiveProfile();
+      if (a) flushPush(a.id);
+      show('splash');
+    });
+    const topbar = $('#map .topbar-actions');
+    if (topbar) topbar.prepend(chip);
+  }
+  chip.innerHTML = `<img src="${a.avatar}" alt="${a.name}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${a.emoji}',style:'font-size:24px'}))" /><span>${a.name}</span>`;
+}
+
+function renderFeedChip() {
+  const n = getFeed();
+  let chip = $('#feed-chip');
+  if (!chip) {
+    chip = document.createElement('div');
+    chip.id = 'feed-chip';
+    chip.className = 'feed-chip';
+    const topbar = $('#map .topbar-actions');
+    if (topbar) topbar.prepend(chip);
+  }
+  chip.innerHTML = `<span aria-hidden="true">🍖</span><span>飼料 × ${n}</span>`;
+  chip.style.display = n > 0 ? '' : 'none';
 }
 
 $('#toggle-bgm').addEventListener('click', () => {
@@ -144,9 +265,9 @@ function enterLocation(locId) {
   currentLoc = findLocation(locId);
   currentTask = null;
   progress = 0;
-  const preview = !isOpen(currentLoc);
-  $('#scene').classList.toggle('preview-mode', preview);
+  $('#scene').classList.remove('preview-mode');
   $('#scene-title').textContent = `${currentLoc.emoji} ${currentLoc.name}`;
+  // Banner now shows daily-claim status instead of time-of-day gating.
   let banner = $('#preview-banner');
   if (!banner) {
     banner = document.createElement('div');
@@ -154,12 +275,12 @@ function enterLocation(locId) {
     banner.className = 'preview-banner';
     $('#scene').insertBefore(banner, $('#scene-bg'));
   }
-  if (preview) {
-    banner.innerHTML = `🌙 這裡現在還在休息 — 請 <b>${fmtHours(currentLoc)}</b> 再來完成任務喔！`;
+  if (hasClaimedDailyReward(currentLoc.id)) {
+    banner.innerHTML = `✅ 今天已領過糖果獎勵！再玩一次可以拿到 🍖 <b>飼料</b>，回去餵小寵物吧～`;
     banner.style.display = 'block';
-    setTimeout(() => speak(`${currentLoc.name}現在還在休息，請${currentLoc.hours[0]}點到${currentLoc.hours[1]}點之間再來完成任務喔`), 400);
   } else {
-    banner.style.display = 'none';
+    banner.innerHTML = `🎁 完成所有任務即可領取今日 <b>${currentLoc.name}</b> 獎勵糖果！`;
+    banner.style.display = 'block';
   }
   const bg = $('#scene-bg');
   bg.style.background = currentLoc.bgFallback;
@@ -176,6 +297,17 @@ function enterLocation(locId) {
     bg.style.position = 'relative';
   };
   img.src = currentLoc.bg;
+
+  // Replay mode: if every task here is already done today AND the daily reward
+  // has been claimed, reset the location's tasks so the kid can replay and
+  // earn 飼料.
+  {
+    const done0 = getDoneToday();
+    const allDone = currentLoc.tasks.every(t => done0.includes(t.id));
+    if (allDone && hasClaimedDailyReward(currentLoc.id)) {
+      resetTasksForReplay(currentLoc.tasks.map(t => t.id));
+    }
+  }
 
   renderTaskList();
   // Auto-pick first undone task
@@ -319,17 +451,6 @@ function handleHit(targetEl) {
 
 function completeTask() {
   const endLine = dialogFor(currentTask.id, currentTask.needs, currentTask.needs) || currentTask.success;
-  const preview = !isOpen(currentLoc);
-  if (preview) {
-    sfxSuccess();
-    speak(`${endLine}  不過這裡要${currentLoc.hours[0]}點到${currentLoc.hours[1]}點才能真正完成任務喔`);
-    setTimeout(() => {
-      const i = currentLoc.tasks.findIndex(t => t.id === currentTask.id);
-      const next = currentLoc.tasks[(i + 1) % currentLoc.tasks.length];
-      if (next) selectTask(next.id);
-    }, 1600);
-    return;
-  }
   speak(endLine);
   markDone(currentTask.id);
   renderTaskList();
@@ -337,7 +458,7 @@ function completeTask() {
   const done = getDoneToday();
   const allDone = currentLoc.tasks.every(t => done.includes(t.id));
   if (allDone) {
-    setTimeout(() => giveCandy(), 800);
+    setTimeout(() => giveReward(), 800);
   } else {
     setTimeout(() => {
       const next = currentLoc.tasks.find(t => !done.includes(t.id));
@@ -357,8 +478,21 @@ const CANDY_MAP = {
   teal:   { emoji:'🟢', img:'assets/images/candies/candy_teal.png',   name:'薄荷糖' },
 };
 
+// Branch the reward based on whether the daily-reward for this location has
+// already been claimed today:
+//   - First completion of the day → candy + chance of egg drop (the original
+//     reward flow), and we mark it claimed.
+//   - Subsequent completions → 飼料 (pet feed) so the kid is incentivized to
+//     keep replaying the locations to interact with their pets.
+function giveReward() {
+  const claimed = hasClaimedDailyReward(currentLoc.id);
+  if (!claimed) giveCandy();
+  else giveFeed();
+}
+
 function giveCandy() {
   const candies = addCandy(currentLoc.color);
+  markDailyRewardClaimed(currentLoc.id);
   sfxCandy(); hapCandy();
   const c = CANDY_MAP[currentLoc.color] || { emoji:'🍬', img:'', name:'糖果' };
   const box = $('#reward-candy');
@@ -381,6 +515,19 @@ function giveCandy() {
       speak('八色糖果大滿貫！你是最棒的小探險家！');
     }, 1800);
   }
+}
+
+// Free-play reward path: 1 piece of pet feed per replay, optional small chance
+// of extra (so the kid still gets surprises). No daily cap.
+function giveFeed() {
+  const bonus = Math.random() < 0.2 ? 2 : 1;
+  const total = addFeed(bonus);
+  sfxCandy(); hapCandy();
+  const box = $('#reward-candy');
+  box.innerHTML = `<span style="font-size:130px">🍖</span>`;
+  $('#reward-text').innerHTML = `太棒了！再次完成所有任務 <br/>獲得 <b>${bonus} 份飼料</b>！<br/><small>目前共 ${total} 份 — 帶到 🪺 餵小寵物會更親密喔</small>`;
+  $('#reward-overlay').classList.remove('hidden');
+  speak(`你拿到${bonus}份飼料，可以拿去餵寵物了`);
 }
 
 function openEggReward(type) {
@@ -541,78 +688,39 @@ $('#hatch-close').addEventListener('click', () => {
   show('nest');
 });
 
-// --- Pet detail (3D rotation + actions) ---
+// --- Pet detail (REAL 3D via three.js) ---
+// We render the egg / pet as a procedural three.js mesh inside #pet-3d.
+// Drag to spin, tap to wiggle. The auto-spin lives inside pet3d.js so the
+// kid sees the model from every angle without lifting a finger.
 let viewMode = null; // 'egg' | 'pet'
 let viewId = null;
-let rotY = 0, rotX = 0;
 
-function applyRot() {
-  $('#pet-3d').style.transform = `rotateX(${rotX}deg) rotateY(${rotY}deg)`;
-}
-
-// Rebuild the pet image node — avoids the stale-ref bug where a 404 onerror
-// replaces <img id="pet-img"> with an emoji span, and a later update then
-// tries to set .src on a node that no longer exists. Image is mounted into
-// the inner wrapper so the auto-spin animation applies.
-function setPetImg(src, fallbackEmoji) {
-  const inner = $('#pet-3d-inner');
-  inner.innerHTML = '';
-  const img = document.createElement('img');
-  img.id = 'pet-img';
-  img.alt = '';
-  img.onerror = () => {
-    const span = document.createElement('span');
-    span.textContent = fallbackEmoji;
-    span.style.fontSize = '180px';
-    span.style.display = 'flex';
-    span.style.alignItems = 'center';
-    span.style.justifyContent = 'center';
-    span.style.width = '100%';
-    span.style.height = '100%';
-    span.style.filter = 'drop-shadow(0 6px 8px rgba(255,200,220,.55))';
-    img.replaceWith(span);
-  };
-  img.src = src;
-  inner.appendChild(img);
-}
-
-function bindPetDrag() {
+// Tap-vs-drag detection on the pet stage container — we still need this in
+// app.js because the canvas inside pet3d handles its own drag, and a tap
+// (no drag) should trigger a cute reaction at the app level (sparkles + voice).
+function bindStageTap() {
   const stage = $('#pet-stage');
-  let dragging = false, lastX=0, lastY=0, moved=false, downAt=0, resumeT=0;
+  let down = false, moved = false, downAt = 0, sx = 0, sy = 0;
   stage.onpointerdown = e => {
-    dragging = true; moved = false; downAt = Date.now();
-    lastX = e.clientX; lastY = e.clientY;
-    stage.setPointerCapture(e.pointerId);
-    // Pause auto-spin so the kid feels in control while dragging
-    stage.classList.add('dragging');
-    if (resumeT) { clearTimeout(resumeT); resumeT = 0; }
+    down = true; moved = false; downAt = Date.now();
+    sx = e.clientX; sy = e.clientY;
   };
   stage.onpointermove = e => {
-    if (!dragging) return;
-    const dx = e.clientX - lastX, dy = e.clientY - lastY;
-    if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
-    rotY += dx * 0.6;
-    rotX = Math.max(-45, Math.min(45, rotX - dy * 0.4));
-    lastX = e.clientX; lastY = e.clientY;
-    applyRot();
+    if (!down) return;
+    if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) > 6) moved = true;
   };
-  stage.onpointerup = stage.onpointercancel = () => {
-    if (!dragging) return;
-    dragging = false;
-    // Tap (no drag) on the pet → cute wiggle reaction (but not on the egg)
-    if (!moved && (Date.now() - downAt) < 400) {
-      petWiggle();
-    }
-    // Resume auto-spin after a short pause so the kid sees their final angle
-    resumeT = setTimeout(() => stage.classList.remove('dragging'), 1500);
+  const finish = () => {
+    if (!down) return;
+    if (!moved && (Date.now() - downAt) < 400) petWiggle();
+    down = false;
   };
+  stage.onpointerup = finish;
+  stage.onpointercancel = finish;
 }
 
-// Cute reaction when the pet is tapped: wiggle + sparkles + voice
+// Cute reaction when the pet is tapped: 3D wiggle + sparkles + voice.
 function petWiggle() {
-  const wrap = $('#pet-3d');
-  wrap.classList.remove('wiggle'); void wrap.offsetWidth; wrap.classList.add('wiggle');
-  setTimeout(() => wrap.classList.remove('wiggle'), 800);
+  wigglePet3D();
   if (viewMode === 'pet') {
     const p = getPets()[viewId];
     if (p) {
@@ -633,6 +741,11 @@ function petWiggle() {
   }
 }
 
+function eggProgressFraction(e) {
+  if (!e) return 0;
+  return Math.min(1, ((e.water||0) + (e.sun||0)) / (HATCH_NEEDS.water + HATCH_NEEDS.sun));
+}
+
 function openEggView(id) {
   const eggs = getEggs();
   const e = eggs[id];
@@ -641,11 +754,13 @@ function openEggView(id) {
   viewId = id;
   const meta = PET_META[e.type];
   $('#petview-title').textContent = `🥚 ${meta.name}的蛋`;
-  setPetImg(meta.egg, '🥚');
-  rotY = 0; rotX = 0; applyRot();
+  // Mount real 3D egg with current crack progress
+  const stage3d = $('#pet-3d');
+  stage3d.innerHTML = ''; // clear the legacy inner wrapper
+  mountPet3D(stage3d, { kind: 'egg', petType: e.type, progress: eggProgressFraction(e) });
   renderPetInfo();
   renderPetActions();
-  bindPetDrag();
+  bindStageTap();
   show('petview');
   speak('拖動蛋可以 360 度觀察喔，每天幫它噴水和曬太陽會慢慢孵化');
 }
@@ -658,15 +773,16 @@ function openPetView(id) {
   viewId = id;
   const meta = PET_META[p.type];
   $('#petview-title').textContent = `${meta.emoji} ${meta.name}`;
-  setPetImg(meta.pet, meta.emoji);
-  rotY = 0; rotX = 0; applyRot();
+  const stage3d = $('#pet-3d');
+  stage3d.innerHTML = '';
+  mountPet3D(stage3d, { kind: 'pet', petType: p.type });
   const { pet, isNewDay } = interactPet(id);
   const dayIdx = petDayIndex(pet);
   const dailyLine = PET_DAILY[dayIdx % PET_DAILY.length];
   setTimeout(() => speak(dailyLine), 400);
   renderPetInfo();
   renderPetActions();
-  bindPetDrag();
+  bindStageTap();
   show('petview');
 }
 
@@ -681,7 +797,7 @@ function renderPetInfo() {
     if (!p) return;
     const meta = PET_META[p.type];
     const dayIdx = petDayIndex(p);
-    const fr = Array.from({length:5}, (_,i) => i < Math.min(5, Math.round(p.friendship/2)) ? '❤' : '🤍').join('');
+    const fr = Array.from({length:5}, (_,i) => i < Math.min(5, Math.round(p.friendship/2)) ? '❤️' : '🤎').join('');
     info.innerHTML = `${meta.name} ・ 第 ${dayIdx+1} 天 <span class="fr-bar">${fr.split('').map(e=>`<span>${e}</span>`).join('')}</span>`;
   }
 }
@@ -707,16 +823,56 @@ function renderPetActions() {
       sfxTap(); hapTap();
       const p = getPets()[viewId];
       const meta = PET_META[p.type];
+      wigglePet3D();
       const tick = document.createElement('span');
       tick.textContent = '💖';
-      tick.style.cssText = 'position:absolute;font-size:38px;pointer-events:none;animation:pet-hatch 1s ease-out';
+      tick.style.cssText = 'position:absolute;font-size:38px;pointer-events:none;animation:pet-hatch 1s ease-out;left:50%;top:30%;transform:translateX(-50%);z-index:5';
       const stage = $('#pet-stage');
-      tick.style.left = '50%'; tick.style.top = '30%'; tick.style.transform = 'translateX(-50%)';
       stage.appendChild(tick);
       setTimeout(()=>tick.remove(), 1000);
       speak(`${meta.name}喵嗚～好舒服`);
     });
-    bar.append(pat);
+
+    // Feed button — only enabled if the kid has feed in inventory.
+    const feed = document.createElement('button');
+    feed.className = 'act-feed';
+    const feedCount = getFeed();
+    feed.innerHTML = `🍖 餵食 <small>(剩 ${feedCount})</small>`;
+    feed.disabled = feedCount <= 0;
+    feed.addEventListener('click', () => {
+      if (!spendFeed(1)) {
+        speak('飼料不夠了，再去地點完成任務可以拿到飼料喔');
+        return;
+      }
+      sfxCandy(); hapCandy();
+      const p = getPets()[viewId];
+      const meta = PET_META[p.type];
+      // Bump friendship like a "new day" interaction
+      const pets = getPets();
+      pets[viewId].friendship = Math.min(10, (pets[viewId].friendship || 1) + 1);
+      // We can't directly write through pets.js helpers, but interactPet will
+      // re-save on next call. For now, persist via a manual write.
+      try {
+        const stored = JSON.parse(localStorage.getItem(`kda_pets__${getActiveProfile().id}`)) || {};
+        stored[viewId] = pets[viewId];
+        localStorage.setItem(`kda_pets__${getActiveProfile().id}`, JSON.stringify(stored));
+      } catch {}
+      wigglePet3D();
+      // Floating food particles
+      const stage = $('#pet-stage');
+      ['🍖','🍗','🥩','💕'].forEach((emo, i) => {
+        const sp = document.createElement('span');
+        sp.textContent = emo;
+        sp.style.cssText = `position:absolute;left:${44 + i*4}%;top:${28 + i*2}%;font-size:30px;pointer-events:none;animation:pet-hatch 1s ease-out;z-index:5`;
+        stage.appendChild(sp);
+        setTimeout(() => sp.remove(), 1000);
+      });
+      speak(`${meta.name}吃得好開心，我們更親密了`);
+      renderPetInfo();
+      renderPetActions();
+      renderFeedChip();
+    });
+    bar.append(pat, feed);
   }
 }
 
@@ -736,8 +892,11 @@ function doInteract(kind) {
     const meta = PET_META[pet.type];
     viewMode = 'pet';
     viewId = petId;
-    setPetImg(meta.pet, meta.emoji);
-    $('#pet-3d').classList.remove('hatch-anim'); void $('#pet-3d').offsetWidth; $('#pet-3d').classList.add('hatch-anim');
+    // Swap egg → real-3D pet mesh
+    const stage3d = $('#pet-3d');
+    stage3d.innerHTML = '';
+    mountPet3D(stage3d, { kind: 'pet', petType: pet.type });
+    stage3d.classList.remove('hatch-anim'); void stage3d.offsetWidth; stage3d.classList.add('hatch-anim');
     $('#petview-title').textContent = `${meta.emoji} ${meta.name}`;
     $('#hatch-img').innerHTML = `<img src="${meta.pet}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${meta.emoji}',style:'font-size:140px'}))" />`;
     $('#hatch-text').innerHTML = `歡迎 <b>${meta.name}</b> 加入你的小窩！`;
@@ -749,14 +908,23 @@ function doInteract(kind) {
     renderNestBadge();
     return;
   }
+  // Live update the crack texture so the kid sees real progress on the shell.
+  const e = getEggs()[viewId];
+  setEggProgress(eggProgressFraction(e));
   renderPetInfo();
   speak(kind === 'water' ? '水滋潤了一下，蛋蛋舒服地晃了晃' : '陽光暖暖的，蛋蛋在發光');
 }
 
 $('#back-from-petview').addEventListener('click', () => {
   sfxTap(); hapTap();
+  unmountPet3D();
   renderNest();
   show('nest');
+});
+
+// Also unmount when the hatch overlay closes (it goes to nest screen)
+$('#hatch-close').addEventListener('click', () => {
+  unmountPet3D();
 });
 
 // --- Init: if splash has been skipped last time, still show splash each time (kids love it) ---

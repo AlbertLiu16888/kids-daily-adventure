@@ -1,9 +1,15 @@
-// Pet & egg state. Stored in localStorage.
+// Pet & egg state. Stored in localStorage, profile-namespaced via nsKey().
 //
 // eggs: { [id]: { type, water:0-5, sun:0-5, createdAt } }
 // pets: { [id]: { type, name, hatchedAt, friendship:0-10, lastInteract: 'YYYY-MM-DD' } }
 // dailyHatchActions: per-day counter keyed by date+eggId so we don't let a kid
 //   tap 100 times in one minute — encourages daily revisits.
+//
+// Storage keys (after profile namespacing) become e.g. 'kda_eggs__sanbei',
+// 'kda_pets__wangwang'. Each write also kicks off a cloud push.
+
+import { nsKey, getActiveProfile } from './profile.js';
+import { schedulePush } from './cloud.js';
 
 const K_EGGS = 'kda_eggs';
 const K_PETS = 'kda_pets';
@@ -22,10 +28,35 @@ export const PET_META = {
 
 export const HATCH_NEEDS = { water: 5, sun: 5 };
 
-function read(k, d) {
-  try { return JSON.parse(localStorage.getItem(k)) || d; } catch { return d; }
+function read(baseKey, fallback) {
+  try {
+    const raw = localStorage.getItem(nsKey(baseKey));
+    return raw ? (JSON.parse(raw) || fallback) : fallback;
+  } catch { return fallback; }
 }
-function write(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
+function write(baseKey, value) {
+  localStorage.setItem(nsKey(baseKey), JSON.stringify(value));
+  const a = getActiveProfile();
+  if (a) schedulePush(a.id);
+}
+
+// 0..1 progress toward hatch — used to draw cracks on the egg shell.
+export function eggProgress(egg) {
+  if (!egg) return 0;
+  const total = HATCH_NEEDS.water + HATCH_NEEDS.sun;
+  return Math.min(1, ((egg.water||0) + (egg.sun||0)) / total);
+}
+
+// Buckets the progress into one of 5 visual stages so the egg looks
+// progressively more cracked: 0 = pristine, 4 = about to hatch.
+export function eggCrackStage(egg) {
+  const p = eggProgress(egg);
+  if (p <= 0) return 0;
+  if (p < 0.25) return 1;
+  if (p < 0.55) return 2;
+  if (p < 0.85) return 3;
+  return 4;
+}
 
 function today() {
   const d = new Date();
