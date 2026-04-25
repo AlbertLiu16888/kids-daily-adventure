@@ -1,7 +1,7 @@
 // Bump on every release that ships JS/CSS changes — the activate handler
 // deletes any caches whose key !== CACHE, so a version bump here cleanly
 // invalidates the old shell on next visit.
-const CACHE = 'kda-v3.2';
+const CACHE = 'kda-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -18,6 +18,16 @@ const ASSETS = [
   './js/profile.js',
   './js/cloud.js',
   './js/pet3d.js',
+  // v2.4: landmark-as-element map assets
+  './assets/images/map/map_bg_v24.png',
+  './assets/images/landmarks/lm_qingtang.png',
+  './assets/images/landmarks/lm_kindergarten.png',
+  './assets/images/landmarks/lm_nursery.png',
+  './assets/images/landmarks/lm_zoo.png',
+  './assets/images/landmarks/lm_sheepworld.png',
+  './assets/images/landmarks/lm_beach.png',
+  './assets/images/landmarks/lm_dinomountain.png',
+  './assets/images/landmarks/lm_office.png',
 ];
 
 self.addEventListener('install', e => {

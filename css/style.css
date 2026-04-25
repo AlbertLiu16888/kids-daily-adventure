@@ -937,36 +937,114 @@ body {
 /* Hide the legacy moon (we replaced it with the stamp) */
 .hotspot-moon { display: none !important; }
 
-/* Signpost: shown for locations that have no painted landmark on the map
-   (zoo / sheepworld). A soft circular emoji badge so kids see what to tap. */
-.hotspot-signpost {
+/* === v2.4: landmark-as-element ============================================
+   Each landmark is its own button with a painted sticker PNG inside. The
+   sticker IS the click target — no invisible ellipse, no percentage
+   hit-testing over a flat bitmap. Stable across orientations and devices
+   because the sticker scales with the map-frame.
+   ========================================================================= */
+.landmark {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  /* Width is % of .map-frame; height auto so square stickers stay square. */
+  width: 17%;
   transform: translate(-50%, -50%);
-  width: 64%;
-  aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-  font-size: 38px;
-  background: radial-gradient(circle at 35% 30%, #ffffff, #fff0f6 65%, #ffd9e8);
-  border-radius: 50%;
-  box-shadow:
-    0 4px 10px rgba(0,0,0,.15),
-    inset 0 -3px 6px rgba(255,180,210,.55);
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  pointer-events: auto;
+  /* The sticker is the click target — its bbox = its hit area. */
+  transition: transform .18s cubic-bezier(.34,1.56,.64,1);
+  z-index: 1;
+}
+.landmark:hover { z-index: 3; }
+.landmark:active { transform: translate(-50%, -50%) scale(.92); }
+.landmark-art {
+  width: 100%;
+  height: auto;
+  display: block;
+  /* Soft drop-shadow so each sticker pops off the background. */
+  filter: drop-shadow(0 4px 6px rgba(80, 30, 90, 0.18))
+          drop-shadow(0 1px 2px rgba(80, 30, 90, 0.10));
+  user-select: none;
+  -webkit-user-drag: none;
   pointer-events: none;
+  /* Idle wiggle so the map feels alive. Each landmark uses a slightly
+     different delay (set inline on .landmark.delay-N if needed). */
+  animation: landmark-bob 3.6s ease-in-out infinite;
 }
+.landmark:nth-child(2n) .landmark-art { animation-delay: -1.2s; }
+.landmark:nth-child(3n) .landmark-art { animation-delay: -2.4s; }
+@keyframes landmark-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+.landmark-label {
+  font-weight: 900;
+  font-size: 13px;
+  line-height: 1.1;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--ink, #3a2a3a);
+  border-radius: 999px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+  pointer-events: none;
+  margin-top: 2px;
+}
+.landmark-stamp {
+  position: absolute;
+  /* Sit just above the sticker, but inside the landmark's hit area. */
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 800;
+  background: #fffaf0;
+  border: 2px solid #ffd06f;
+  color: #c08400;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  z-index: 2;
+}
+.landmark.claimed .landmark-stamp {
+  background: #f1f8ed;
+  border-color: #a3d27a;
+  color: #4f8a2a;
+}
+.landmark.claimed .landmark-art {
+  filter: drop-shadow(0 2px 4px rgba(80, 30, 90, 0.12)) saturate(0.78);
+}
+.landmark.done::after {
+  content: "⭐";
+  position: absolute;
+  top: 18%;
+  right: -6px;
+  font-size: 22px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.25));
+  animation: done-bounce 1.6s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+/* Phone screens: shrink labels and stamps so they don't crowd. */
 @media (max-width: 480px) {
-  .hotspot-signpost { font-size: 28px; }
+  .landmark { width: 19%; }
+  .landmark-label { font-size: 11px; padding: 1px 6px; }
+  .landmark-stamp { font-size: 10px; padding: 1px 6px; }
 }
-/* On hotspots with a signpost we don't need the noisy pulse ring — the
-   emoji badge is the marker. Dim the ring to a soft halo. */
-.hotspot.signpost::before {
-  box-shadow:
-    0 0 0 2px rgba(255,255,255,.7),
-    0 0 16px 6px rgba(255,200,220,.45);
-  animation: none;
-  inset: 14%;
+/* Wide screens: don't let landmarks become huge. */
+@media (min-width: 900px) {
+  .landmark { width: 14%; }
 }
 
 /* Feed action button in pet view */
