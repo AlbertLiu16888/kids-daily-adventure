@@ -53,18 +53,18 @@ setInterval(tickClock, 30000);
 tickClock();
 
 // --- Map ---
-// Positions over map_main.png. The existing image has 6 landmarks; the 2 new
-// locations sit in the middle-left / middle-right empty band until the map is
-// regenerated to a 4x2 layout.
+// 3-2-3 layout that works on the existing 6-landmark map (zoo + sheepworld
+// fill the middle band) and matches the regenerated v2 map's intended grid.
+// Coordinates are %, so they scale with the now-full-bleed map.
 const MAP_POS = {
-  qingtang:     { x: 14, y: 26 },
-  kindergarten: { x: 48, y: 26 },
-  nursery:      { x: 84, y: 28 },
+  qingtang:     { x: 17, y: 22 },
+  kindergarten: { x: 50, y: 22 },
+  nursery:      { x: 83, y: 22 },
   zoo:          { x: 30, y: 52 },
   sheepworld:   { x: 70, y: 52 },
-  beach:        { x: 15, y: 76 },
-  dinomountain: { x: 48, y: 80 },
-  office:       { x: 83, y: 78 },
+  beach:        { x: 17, y: 80 },
+  dinomountain: { x: 50, y: 80 },
+  office:       { x: 83, y: 80 },
 };
 
 function renderMap() {
@@ -492,7 +492,7 @@ function renderNest() {
       const p = pets[id];
       const meta = PET_META[p.type];
       const dayIdx = petDayIndex(p);
-      const fr = Array.from({length: 5}, (_,i) => i < Math.min(5, Math.round(p.friendship/2)) ? '❤' : '🤍').join('');
+      const fr = Array.from({length: 5}, (_,i) => i < Math.min(5, Math.round(p.friendship/2)) ? '❤️' : '🩶').join('');
       const cell = document.createElement('button');
       cell.className = 'nest-cell';
       cell.innerHTML = `
@@ -552,35 +552,85 @@ function applyRot() {
 
 // Rebuild the pet image node — avoids the stale-ref bug where a 404 onerror
 // replaces <img id="pet-img"> with an emoji span, and a later update then
-// tries to set .src on a node that no longer exists.
+// tries to set .src on a node that no longer exists. Image is mounted into
+// the inner wrapper so the auto-spin animation applies.
 function setPetImg(src, fallbackEmoji) {
-  const stage3d = $('#pet-3d');
-  stage3d.innerHTML = '';
+  const inner = $('#pet-3d-inner');
+  inner.innerHTML = '';
   const img = document.createElement('img');
   img.id = 'pet-img';
   img.alt = '';
   img.onerror = () => {
     const span = document.createElement('span');
     span.textContent = fallbackEmoji;
-    span.style.fontSize = '200px';
+    span.style.fontSize = '180px';
+    span.style.display = 'flex';
+    span.style.alignItems = 'center';
+    span.style.justifyContent = 'center';
+    span.style.width = '100%';
+    span.style.height = '100%';
+    span.style.filter = 'drop-shadow(0 6px 8px rgba(255,200,220,.55))';
     img.replaceWith(span);
   };
   img.src = src;
-  stage3d.appendChild(img);
+  inner.appendChild(img);
 }
 
 function bindPetDrag() {
   const stage = $('#pet-stage');
-  let dragging = false, lastX=0, lastY=0;
-  stage.onpointerdown = e => { dragging = true; lastX = e.clientX; lastY = e.clientY; stage.setPointerCapture(e.pointerId); };
+  let dragging = false, lastX=0, lastY=0, moved=false, downAt=0, resumeT=0;
+  stage.onpointerdown = e => {
+    dragging = true; moved = false; downAt = Date.now();
+    lastX = e.clientX; lastY = e.clientY;
+    stage.setPointerCapture(e.pointerId);
+    // Pause auto-spin so the kid feels in control while dragging
+    stage.classList.add('dragging');
+    if (resumeT) { clearTimeout(resumeT); resumeT = 0; }
+  };
   stage.onpointermove = e => {
     if (!dragging) return;
-    rotY += (e.clientX - lastX) * 0.6;
-    rotX = Math.max(-45, Math.min(45, rotX - (e.clientY - lastY) * 0.4));
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+    rotY += dx * 0.6;
+    rotX = Math.max(-45, Math.min(45, rotX - dy * 0.4));
     lastX = e.clientX; lastY = e.clientY;
     applyRot();
   };
-  stage.onpointerup = stage.onpointercancel = () => { dragging = false; };
+  stage.onpointerup = stage.onpointercancel = () => {
+    if (!dragging) return;
+    dragging = false;
+    // Tap (no drag) on the pet → cute wiggle reaction (but not on the egg)
+    if (!moved && (Date.now() - downAt) < 400) {
+      petWiggle();
+    }
+    // Resume auto-spin after a short pause so the kid sees their final angle
+    resumeT = setTimeout(() => stage.classList.remove('dragging'), 1500);
+  };
+}
+
+// Cute reaction when the pet is tapped: wiggle + sparkles + voice
+function petWiggle() {
+  const wrap = $('#pet-3d');
+  wrap.classList.remove('wiggle'); void wrap.offsetWidth; wrap.classList.add('wiggle');
+  setTimeout(() => wrap.classList.remove('wiggle'), 800);
+  if (viewMode === 'pet') {
+    const p = getPets()[viewId];
+    if (p) {
+      const meta = PET_META[p.type];
+      sfxTap(); hapTap();
+      const stage = $('#pet-stage');
+      ['💖','✨','💕'].forEach((s, i) => {
+        const sp = document.createElement('span');
+        sp.textContent = s;
+        sp.style.cssText = `position:absolute;left:${48 + (i-1)*8}%;top:${30 + i*2}%;font-size:34px;pointer-events:none;animation:pet-hatch 1s ease-out;z-index:5`;
+        stage.appendChild(sp);
+        setTimeout(() => sp.remove(), 1000);
+      });
+      speak(`${meta.name}咕咕～好開心`);
+    }
+  } else {
+    sfxTap(); hapTap();
+  }
 }
 
 function openEggView(id) {

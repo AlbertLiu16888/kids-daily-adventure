@@ -184,17 +184,20 @@ body {
 /* ---------- Map ---------- */
 .map-hero {
   flex: 1 1 auto;
-  padding: 8px 12px;
+  padding: 0;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   overflow: hidden;
 }
+/* Full-bleed map frame: fills the viewport while keeping the image proportional
+   via object-fit. No more letterbox edges; hotspots are positioned in % so they
+   move with the rendered image area. */
 .map-frame {
   position: relative;
   width: 100%;
-  max-width: 720px;
-  aspect-ratio: 1046 / 576;
+  height: 100%;
+  max-width: none;
   max-height: 100%;
 }
 .map-img {
@@ -202,8 +205,9 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
+  object-position: center;
+  border-radius: 0;
+  box-shadow: none;
   user-select: none;
   -webkit-user-drag: none;
   background: linear-gradient(135deg, #ffeef5, #e9f2ff);
@@ -400,46 +404,128 @@ body {
   font-weight: 700;
 }
 
-/* Pet detail: 3D rotation */
+/* Pet detail: 3D rotation
+   Architecture:
+   - .pet-stage owns perspective + drag pointer events
+   - .pet-3d gets the user's drag rotation (set by JS as transform: rotateX/Y)
+     plus the floating idle animation (translate-only, doesn't conflict)
+   - .pet-3d-inner gets the auto-spin animation (continuous Y rotation)
+     so user drag and auto-spin stack cleanly via preserve-3d
+   - Drag pauses the auto-spin via the .dragging class on .pet-stage */
 .pet-stage {
   flex: 1 1 auto;
   min-height: 0;
   display: flex; align-items: center; justify-content: center;
-  perspective: 900px;
+  perspective: 1200px;
   padding: 8px;
+  position: relative;
   background:
-    radial-gradient(circle at 50% 55%, rgba(255,255,255,.8), transparent 65%),
+    radial-gradient(circle at 50% 55%, rgba(255,255,255,.85), transparent 65%),
     linear-gradient(180deg, #ffe9f0 0%, #dff0ff 100%);
   overflow: hidden;
   touch-action: none;
   user-select: none;
 }
+
+/* Soft halo behind the pet */
+.pet-glow {
+  position: absolute;
+  width: min(70vw, 300px);
+  height: min(70vw, 300px);
+  border-radius: 50%;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -52%);
+  background: radial-gradient(circle, rgba(255,255,255,.85) 0%, rgba(255,222,238,.4) 50%, transparent 75%);
+  pointer-events: none;
+  animation: glow-pulse 4s ease-in-out infinite;
+  filter: blur(2px);
+}
+@keyframes glow-pulse {
+  0%,100% { opacity: .55; transform: translate(-50%, -52%) scale(.92); }
+  50%     { opacity: .85; transform: translate(-50%, -52%) scale(1.06); }
+}
+
+/* Soft elliptical shadow on the floor */
+.pet-shadow {
+  position: absolute;
+  bottom: 14%;
+  left: 50%;
+  width: min(46vw, 200px);
+  height: 18px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse, rgba(62,42,78,.32) 0%, rgba(62,42,78,0) 70%);
+  pointer-events: none;
+  animation: shadow-pulse 3.2s ease-in-out infinite;
+}
+@keyframes shadow-pulse {
+  0%,100% { transform: translateX(-50%) scale(1); opacity: .85; }
+  50%     { transform: translateX(-50%) scale(.78); opacity: .55; }
+}
+
 .pet-3d {
-  width: min(72vw, 320px);
-  height: min(72vw, 320px);
+  width: min(72vw, 340px);
+  height: min(72vw, 340px);
   transform-style: preserve-3d;
-  transition: transform .05s linear;
+  transition: transform .08s linear;
   will-change: transform;
-  filter: drop-shadow(0 16px 20px rgba(0,0,0,.18));
+  filter: drop-shadow(0 12px 12px rgba(62,42,78,.18));
   animation: pet-float 3.2s ease-in-out infinite;
+  position: relative;
+  z-index: 1;
 }
 @keyframes pet-float {
   0%,100% { translate: 0 0; }
   50%     { translate: 0 -12px; }
 }
+
+/* Inner wrapper: continuous slow Y-axis spin (auto-rotate) */
+.pet-3d-inner {
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  animation: pet-auto-spin 18s linear infinite;
+  will-change: transform;
+}
+@keyframes pet-auto-spin {
+  from { transform: rotateY(0deg); }
+  to   { transform: rotateY(360deg); }
+}
+/* Pause auto-spin while user is dragging — JS toggles .dragging on stage */
+.pet-stage.dragging .pet-3d-inner { animation-play-state: paused; }
+
+/* Allow callers to disable auto-spin entirely (e.g. tutorial / hatch moment) */
+.pet-3d-inner.no-spin { animation: none; transform: rotateY(0deg); }
+
 .pet-3d img {
   width: 100%;
   height: 100%;
   object-fit: contain;
   backface-visibility: hidden;
+  /* Adds a subtle pseudo-3D feel: highlight on the front, dim on the back */
+  filter: drop-shadow(0 4px 6px rgba(255,200,220,.5));
 }
-.pet-3d.hatch-anim {
-  animation: pet-hatch 1.2s ease-out;
+
+/* Tap-to-wiggle: cute happy bounce when the kid touches the pet */
+.pet-3d.wiggle {
+  animation: pet-float 3.2s ease-in-out infinite, pet-wiggle .7s ease-in-out;
+}
+@keyframes pet-wiggle {
+  0%   { transform: rotate(0deg) scale(1); }
+  20%  { transform: rotate(-8deg) scale(1.06); }
+  40%  { transform: rotate(7deg) scale(1.08); }
+  60%  { transform: rotate(-5deg) scale(1.05); }
+  80%  { transform: rotate(3deg) scale(1.02); }
+  100% { transform: rotate(0deg) scale(1); }
+}
+
+.pet-3d.hatch-anim .pet-3d-inner {
+  animation: pet-hatch 1.2s ease-out, pet-auto-spin 18s linear 1.2s infinite;
 }
 @keyframes pet-hatch {
-  0%   { transform: scale(.4) rotate(0deg); opacity: 0; }
-  60%  { transform: scale(1.2) rotate(10deg); opacity: 1; }
-  100% { transform: scale(1) rotate(0); }
+  0%   { transform: scale(.4) rotateY(-30deg); opacity: 0; }
+  50%  { transform: scale(1.25) rotateY(180deg); opacity: 1; }
+  80%  { transform: scale(.95) rotateY(330deg); }
+  100% { transform: scale(1) rotateY(360deg); }
 }
 
 .pet-info {
@@ -485,8 +571,7 @@ body {
 
 /* Landscape */
 @media (orientation: landscape) and (max-width: 1024px) {
-  .map-hero { padding: 6px 10px; }
-  .map-frame { max-width: 640px; }
+  .map-hero { padding: 0; }
   .hotspot-label { font-size: 12px; padding: 2px 8px; }
 }
 
