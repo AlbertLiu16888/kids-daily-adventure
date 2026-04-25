@@ -131,18 +131,24 @@ setInterval(tickClock, 30000);
 tickClock();
 
 // --- Map ---
-// 3-2-3 layout that works on the existing 6-landmark map (zoo + sheepworld
-// fill the middle band) and matches the regenerated v2 map's intended grid.
-// Coordinates are %, so they scale with the now-full-bleed map.
+// Coordinates are % of the .map-frame, which preserves the source image's
+// 1408×768 aspect ratio (see CSS). The 6 painted landmarks below are pinned
+// to the centers of their illustrations in the current map_main.png; zoo and
+// sheepworld have `signpost: true` because the map has no painted landmark
+// for them — we render an emoji signpost over the empty path zone.
+//
+// If you regenerate the map image with new landmark positions, re-measure
+// these from the new file (open the image, find each landmark's pixel
+// center, divide by 1408 / 768).
 const MAP_POS = {
-  qingtang:     { x: 17, y: 22 },
-  kindergarten: { x: 50, y: 22 },
-  nursery:      { x: 83, y: 22 },
-  zoo:          { x: 30, y: 52 },
-  sheepworld:   { x: 70, y: 52 },
-  beach:        { x: 17, y: 80 },
-  dinomountain: { x: 50, y: 80 },
-  office:       { x: 83, y: 80 },
+  qingtang:     { x: 15, y: 23 },                      // pond + ducks (top-left)
+  kindergarten: { x: 40, y: 22 },                      // yellow school (top-center)
+  nursery:      { x: 78, y: 23 },                      // pink toddler school (top-right)
+  zoo:          { x: 25, y: 50, signpost: '🦁' },      // empty left path (no landmark)
+  sheepworld:   { x: 75, y: 50, signpost: '🐑' },      // empty right path (no landmark)
+  beach:        { x: 13, y: 65 },                      // beach + waves (bottom-left)
+  dinomountain: { x: 45, y: 75 },                      // dino on dirt mound (bottom-center)
+  office:       { x: 84, y: 65 },                      // purple office (bottom-right)
 };
 
 function renderMap() {
@@ -159,6 +165,7 @@ function renderMap() {
     btn.style.left = pos.x + '%';
     btn.style.top = pos.y + '%';
     if (pos.y > 50) btn.classList.add('bottom-row');
+    if (pos.signpost) btn.classList.add('signpost');
     btn.setAttribute('aria-label', loc.name);
     const allDone = loc.tasks.every(t => done.includes(t.id));
     const claimed = hasClaimedDailyReward(loc.id);
@@ -167,8 +174,15 @@ function renderMap() {
     const stateBadge = claimed
       ? '<span class="hotspot-stamp">✅ 今日已領</span>'
       : '<span class="hotspot-stamp">🎁 可領獎</span>';
+    // For locations with no painted landmark, render an emoji signpost so
+    // the kid sees *something* to tap. For painted landmarks the oval is
+    // intentionally empty — the tap target sits invisibly over the art.
+    const signpost = pos.signpost
+      ? `<span class="hotspot-signpost" aria-hidden="true">${pos.signpost}</span>`
+      : '';
     btn.innerHTML = `
       ${stateBadge}
+      ${signpost}
       <span class="hotspot-label">${loc.name}</span>
     `;
     btn.addEventListener('click', () => {

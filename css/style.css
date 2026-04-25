@@ -245,31 +245,35 @@ body {
   flex: 1 1 auto;
   padding: 0;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   justify-content: center;
   overflow: hidden;
+  background: linear-gradient(135deg, #ffeef5, #e9f2ff);
 }
-/* Full-bleed map frame: fills the viewport while keeping the image proportional
-   via object-fit. No more letterbox edges; hotspots are positioned in % so they
-   move with the rendered image area. */
+/* Map frame matches the source image's aspect ratio so the hotspot overlay
+   (positioned in %) lines up with the rendered image at any device size /
+   orientation. The frame letterboxes inside .map-hero — never crops. */
 .map-frame {
   position: relative;
+  /* Source: assets/images/map/map_main.png is 1408×768. Keep in sync if the
+     map image is regenerated at a different ratio. */
+  aspect-ratio: 1408 / 768;
   width: 100%;
-  height: 100%;
-  max-width: none;
+  max-width: 100%;
   max-height: 100%;
+  /* Browsers honor max-height by shrinking width to preserve aspect-ratio,
+     so this works in both portrait and landscape without JS. */
 }
 .map-img {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
   border-radius: 0;
   box-shadow: none;
   user-select: none;
   -webkit-user-drag: none;
-  background: linear-gradient(135deg, #ffeef5, #e9f2ff);
 }
 .map-hotspots {
   position: absolute;
@@ -278,8 +282,10 @@ body {
 }
 .hotspot {
   position: absolute;
-  width: 22%;
-  height: 30%;
+  /* Smaller than before (was 22%×30%) so adjacent rows don't visually
+     overlap on tall containers. */
+  width: 18%;
+  height: 22%;
   transform: translate(-50%, -50%);
   border: 0;
   background: transparent;
@@ -901,9 +907,12 @@ body {
 /* Hotspot daily-claim stamp — replaces the old time-of-day moon */
 .hotspot-stamp {
   position: absolute;
-  top: -10px;
+  /* Sit right at the top edge of the oval (no negative offset), so the
+     badge stays inside the hotspot's visual footprint and doesn't collide
+     with adjacent hotspots when the map is dense. */
+  top: 0;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   font-size: 11px;
   font-weight: 800;
   background: #fffaf0;
@@ -927,6 +936,38 @@ body {
 }
 /* Hide the legacy moon (we replaced it with the stamp) */
 .hotspot-moon { display: none !important; }
+
+/* Signpost: shown for locations that have no painted landmark on the map
+   (zoo / sheepworld). A soft circular emoji badge so kids see what to tap. */
+.hotspot-signpost {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 64%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  font-size: 38px;
+  background: radial-gradient(circle at 35% 30%, #ffffff, #fff0f6 65%, #ffd9e8);
+  border-radius: 50%;
+  box-shadow:
+    0 4px 10px rgba(0,0,0,.15),
+    inset 0 -3px 6px rgba(255,180,210,.55);
+  pointer-events: none;
+}
+@media (max-width: 480px) {
+  .hotspot-signpost { font-size: 28px; }
+}
+/* On hotspots with a signpost we don't need the noisy pulse ring — the
+   emoji badge is the marker. Dim the ring to a soft halo. */
+.hotspot.signpost::before {
+  box-shadow:
+    0 0 0 2px rgba(255,255,255,.7),
+    0 0 16px 6px rgba(255,200,220,.45);
+  animation: none;
+  inset: 14%;
+}
 
 /* Feed action button in pet view */
 .pet-actions .act-feed {

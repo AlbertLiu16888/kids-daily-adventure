@@ -1,7 +1,7 @@
 // Bump on every release that ships JS/CSS changes — the activate handler
 // deletes any caches whose key !== CACHE, so a version bump here cleanly
 // invalidates the old shell on next visit.
-const CACHE = 'kda-v3';
+const CACHE = 'kda-v3.2';
 const ASSETS = [
   './',
   './index.html',
@@ -21,7 +21,19 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).catch(()=>{}));
+  // Use cache: 'reload' so the install-time pre-cache bypasses the browser's
+  // HTTP cache. Otherwise, if a user has a stale .js / .css from a previous
+  // visit, c.addAll(ASSETS) would silently bake that stale copy into the new
+  // SW cache — breaking the version bump.
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    await Promise.all(ASSETS.map(async (u) => {
+      try {
+        const resp = await fetch(u, { cache: 'reload' });
+        if (resp.ok) await c.put(u, resp);
+      } catch {}
+    }));
+  })());
   self.skipWaiting();
 });
 
