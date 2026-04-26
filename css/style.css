@@ -786,6 +786,22 @@ body {
   80% { transform: translateX(8px) rotate(2deg); }
 }
 
+/* Pet growth-stage pill — appears in nest cells + pet info bar.
+   Colors hint at "early bright → mature deep" so the kid can tell at a glance. */
+.stage-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  vertical-align: middle;
+  line-height: 1.4;
+  margin-left: 4px;
+}
+.stage-pill.stage-baby  { background: #fff1f7; color: #d8559b; border: 1.5px solid #ffd3e7; }
+.stage-pill.stage-young { background: #e9f7ff; color: #1f7fb8; border: 1.5px solid #c5e6f7; }
+.stage-pill.stage-adult { background: #f0e9ff; color: #5a35a0; border: 1.5px solid #d8c8ff; }
+
 .sparkle {
   position: absolute;
   font-size: 32px;

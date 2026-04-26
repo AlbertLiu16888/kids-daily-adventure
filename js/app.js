@@ -16,7 +16,7 @@ import { TASK_DIALOG, PET_DAILY, dialogFor } from './dialogs.js';
 import {
   PET_META, HATCH_NEEDS,
   getEggs, getPets, addEgg, interactEgg, interactPet, petDayIndex,
-  eggCrackStage, seedStarterPetOnce,
+  eggCrackStage, seedStarterPetOnce, petStage, STAGE_LABEL,
 } from './pets.js';
 import { PROFILES, getActiveProfile, setActiveProfile } from './profile.js';
 import { pullProfile, flushPush, onSyncChange, markLocalDirty, restoreSnapshot } from './cloud.js';
@@ -805,12 +805,13 @@ function renderNest() {
       const p = pets[id];
       const meta = PET_META[p.type];
       const dayIdx = petDayIndex(p);
+      const stage = petStage(p);
       const fr = Array.from({length: 5}, (_,i) => i < Math.min(5, Math.round(p.friendship/2)) ? '❤️' : '🩶').join('');
       const cell = document.createElement('button');
       cell.className = 'nest-cell';
       cell.innerHTML = `
         <img src="${meta.pet}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${meta.emoji}',style:'font-size:64px'}))" />
-        <div class="name">${meta.name}</div>
+        <div class="name">${meta.name} <span class="stage-pill stage-${stage}">${STAGE_LABEL[stage]}</span></div>
         <div class="pet-fr">${fr.split('').map(e=>`<span>${e}</span>`).join('')}</div>
         <div class="progress-row"><span>第 ${dayIdx+1} 天</span></div>
       `;
@@ -939,10 +940,11 @@ function openPetView(id) {
   viewMode = 'pet';
   viewId = id;
   const meta = PET_META[p.type];
-  $('#petview-title').textContent = `${meta.emoji} ${meta.name}`;
+  const stage = petStage(p);
+  $('#petview-title').textContent = `${meta.emoji} ${meta.name} ・ ${STAGE_LABEL[stage]}`;
   const stage3d = $('#pet-3d');
   stage3d.innerHTML = '';
-  mountPet3D(stage3d, { kind: 'pet', petType: p.type });
+  mountPet3D(stage3d, { kind: 'pet', petType: p.type, stage });
   const { pet, isNewDay } = interactPet(id);
   const dayIdx = petDayIndex(pet);
   const dailyLine = PET_DAILY[dayIdx % PET_DAILY.length];
@@ -965,8 +967,9 @@ function renderPetInfo() {
     if (!p) return;
     const meta = PET_META[p.type];
     const dayIdx = petDayIndex(p);
+    const stage = petStage(p);
     const fr = Array.from({length:5}, (_,i) => i < Math.min(5, Math.round(p.friendship/2)) ? '❤️' : '🤎').join('');
-    info.innerHTML = `${meta.name} ・ 第 ${dayIdx+1} 天 <span class="fr-bar">${fr.split('').map(e=>`<span>${e}</span>`).join('')}</span>`;
+    info.innerHTML = `${meta.name} ・ 第 ${dayIdx+1} 天 <span class="stage-pill stage-${stage}">${STAGE_LABEL[stage]}</span> <span class="fr-bar">${fr.split('').map(e=>`<span>${e}</span>`).join('')}</span>`;
   }
 }
 
@@ -1065,10 +1068,12 @@ function doInteract(kind) {
     const meta = PET_META[pet.type];
     viewMode = 'pet';
     viewId = petId;
+    // Newly hatched is always 'baby' stage — chubby kawaii proportions.
+    const stage = petStage(pet);
     // Swap egg → real-3D pet mesh
     const stage3d = $('#pet-3d');
     stage3d.innerHTML = '';
-    mountPet3D(stage3d, { kind: 'pet', petType: pet.type });
+    mountPet3D(stage3d, { kind: 'pet', petType: pet.type, stage });
     stage3d.classList.remove('hatch-anim'); void stage3d.offsetWidth; stage3d.classList.add('hatch-anim');
     $('#petview-title').textContent = `${meta.emoji} ${meta.name}`;
     $('#hatch-img').innerHTML = `<img src="${meta.pet}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${meta.emoji}',style:'font-size:140px'}))" />`;

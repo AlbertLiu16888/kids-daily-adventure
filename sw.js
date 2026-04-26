@@ -1,7 +1,7 @@
 // Bump on every release that ships JS/CSS changes — the activate handler
 // deletes any caches whose key !== CACHE, so a version bump here cleanly
 // invalidates the old shell on next visit.
-const CACHE = 'kda-v5';
+const CACHE = 'kda-v7';
 const ASSETS = [
   './',
   './index.html',

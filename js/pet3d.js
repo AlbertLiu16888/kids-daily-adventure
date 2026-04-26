@@ -1,58 +1,73 @@
-// Real 3D pet & egg view using three.js (procedural meshes, no GLTF assets).
+// Real 3D pet & egg view using three.js — v3 anatomically-redesigned models.
 //
-// Why three.js procedural meshes?
-//   - User explicitly rejected the previous approach of rotating a 2D image
-//     ("我的3d動畫要求必須是實際3d，目前是二維圖片反轉，請優化").
-//   - We don't have ready-made 3D models, and the kids' hardware is a phone /
-//     iPad — small procedural meshes with simple lighting render fast and
-//     stay charming.
+// Why procedural three.js (not GLTF or AI assets)?
+//   - Grok image API was disabled when we shipped this; every other CDN-hosted
+//     "cute pet" GLB pack we tried either had an attribution license that
+//     didn't fit a kids' app, or scaled badly on phones.
+//   - Procedural keeps the bundle tiny, loads instantly, and lets us morph
+//     proportions for the growth-stage system below.
 //
-// Each pet type maps to a small composite mesh (body + ears/spikes/wings)
-// with a tinted material, so it reads as "the same character" as the 2D
-// asset but is genuinely 3D — you can rotate it on every axis and it
-// projects correctly.
+// What changed vs v2
+//   - Each pet has a real anatomy: separate head + body + neck + 4 limbs +
+//     tail + species-specific features (long bunny ears, dino spike row, T-Rex
+//     arms, panda eye patches, sheep fluff cloud, crab pincers + 6 legs, etc.)
+//     so it actually reads as the species, not "blob with pieces".
+//   - Stage system: petStage(pet) → 'baby' | 'young' | 'adult'. The anatomy
+//     builder takes a `stage` and tweaks: overall scale, head:body ratio,
+//     eye size, limb length, plus per-species extras (horns appear on adult
+//     sheep, spikes grow on adult dino, ears straighten on adult bunny).
+//   - Subtle ground shadow + breathing pulse so the kid sees a small living
+//     creature, not a static toy.
 //
-// The egg is a stretched sphere with a dynamic crack overlay drawn into a
-// canvas texture. As `setEggProgress(p)` is called the texture redraws with
-// progressively more cracks, so the kid sees real progress on the shell.
+// Egg renderer is unchanged — it was already loved.
 
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 
-// ---- Pet type → look ----
-// Colors in HEX. Each entry can opt into accessories (ears / spikes / wings).
+// ---- Pet type → palette + builder ----
 const PET_LOOK = {
-  duck:  { body:0xfff2a0, accent:0xff8c33, kind:'duck' },
-  dino:  { body:0x9be08a, accent:0x2f8a4d, kind:'dino' },
-  panda: { body:0xfafafa, accent:0x222222, kind:'panda' },
-  sheep: { body:0xfff5fa, accent:0xffc8df, kind:'sheep' },
-  bear:  { body:0xf2c596, accent:0x6a4a30, kind:'bear' },
-  bunny: { body:0xfde6f1, accent:0xffb3d1, kind:'bunny' },
-  crab:  { body:0xff7c63, accent:0xffd0bb, kind:'crab' },
-  bird:  { body:0xc6b6ff, accent:0xfff0a8, kind:'bird' },
+  duck:  { body:0xfff2a0, accent:0xff8c33, dark:0x6b3f12, kind:'duck'  },
+  dino:  { body:0x9be08a, accent:0x2f8a4d, dark:0x1d5a2f, kind:'dino'  },
+  panda: { body:0xfafafa, accent:0x222222, dark:0x000000, kind:'panda' },
+  sheep: { body:0xfff5fa, accent:0xffc8df, dark:0x4a3a3a, kind:'sheep' },
+  bear:  { body:0xf2c596, accent:0x8a5a30, dark:0x4a2a14, kind:'bear'  },
+  bunny: { body:0xfde6f1, accent:0xffb3d1, dark:0x6a4a55, kind:'bunny' },
+  crab:  { body:0xff7c63, accent:0xffd0bb, dark:0x8a2a1a, kind:'crab'  },
+  bird:  { body:0xc6b6ff, accent:0xfff0a8, dark:0x4a3a8a, kind:'bird'  },
+};
+
+// Stage → anatomy parameters. The builders read from this so growing up
+// happens with one number tweak, not eight per-species rewrites.
+//
+// `bodyRatio` is multiplied into body/torso scale so a baby with a big head
+// also gets a small body (preserving cute proportions instead of two
+// overlapping spheres). `headLift` adds extra vertical separation between
+// body top and head bottom so larger heads visibly sit on top of the body.
+const STAGE_PARAMS = {
+  baby:  { scale: 0.85, headRatio: 1.15, eyeRatio: 1.25, limbLen: 0.65, bodyRatio: 0.78, headLift: 0.0,  extras: false },
+  young: { scale: 1.00, headRatio: 1.00, eyeRatio: 1.00, limbLen: 1.00, bodyRatio: 1.00, headLift: 0.0,  extras: false },
+  adult: { scale: 1.20, headRatio: 0.90, eyeRatio: 0.85, limbLen: 1.18, bodyRatio: 1.10, headLift: 0.0,  extras: true  },
 };
 
 // ---- internal singleton state ----
 let renderer = null;
 let scene = null;
 let camera = null;
-let root = null;          // group that we apply user rotation to
-let autoSpinGroup = null; // child group that auto-rotates (so user drag
-                          // resets nicely)
+let root = null;
+let autoSpinGroup = null;
 let dragRotX = 0, dragRotY = 0;
 let isDragging = false;
 let containerEl = null;
 let resizeObserver = null;
 let raf = 0;
-let mode = null;          // 'egg' | 'pet'
-let eggMesh = null;       // for crack texture updates
-let pulseT = 0;           // for cute breathing animation
+let mode = null;        // 'egg' | 'pet'
+let eggMesh = null;     // for crack texture updates
+let pulseT = 0;
 
 // ---- public API ----
 
-// Mount the 3D view into the given container element. `kind` drives whether
-// we build an egg or a hatched pet, `petType` selects which species.
-// Caller may pass `progress` (0..1) for eggs to render the crack stage.
-export function mountPet3D(container, { kind, petType, progress = 0 }) {
+// Mount the 3D view. `kind` = 'egg' | 'pet'; `petType` = species; `progress` =
+// egg crack progress 0..1; `stage` = 'baby' | 'young' | 'adult' (pet only).
+export function mountPet3D(container, { kind, petType, progress = 0, stage = 'young' }) {
   unmountPet3D();
   containerEl = container;
   mode = kind;
@@ -61,23 +76,31 @@ export function mountPet3D(container, { kind, petType, progress = 0 }) {
   const h = container.clientHeight || 320;
 
   scene = new THREE.Scene();
-  // Soft pink ambient + a key light for shape readability.
-  scene.add(new THREE.AmbientLight(0xfff0f6, 0.85));
-  const key = new THREE.DirectionalLight(0xffffff, 0.9);
-  key.position.set(2, 3, 4);
+  // Lights: warm fill + cool key + tinted rim → reads as soft daylight.
+  scene.add(new THREE.AmbientLight(0xfff0f6, 0.75));
+  const key = new THREE.DirectionalLight(0xffffff, 0.95);
+  key.position.set(2.5, 3.2, 4);
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0xffd0e8, 0.6);
+  const rim = new THREE.DirectionalLight(0xffd0e8, 0.5);
   rim.position.set(-3, 2, -2);
   scene.add(rim);
+  const bottom = new THREE.HemisphereLight(0xfff5fb, 0x8a6a8a, 0.35);
+  scene.add(bottom);
 
-  camera = new THREE.PerspectiveCamera(35, w/h, 0.1, 100);
-  camera.position.set(0, 0.2, 5.6);
-  camera.lookAt(0, 0, 0);
+  camera = new THREE.PerspectiveCamera(38, w/h, 0.1, 100);
+  // Pull back a touch + look at the body's center-of-mass (slightly above
+  // floor) so the whole creature — head + body + legs + shadow — fits in
+  // frame for every species and every growth stage.
+  camera.position.set(0, 0.5, 7.0);
+  camera.lookAt(0, -0.15, 0);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  // preserveDrawingBuffer:true so screenshots / debug tools that snapshot the
+  // page DOM see the rendered frame (default-false back buffer is wiped after
+  // each present and would screenshot transparent). Tiny perf cost, fine here.
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.setSize(w, h, false);
-  renderer.setClearColor(0x000000, 0); // transparent — let CSS gradient show
+  renderer.setClearColor(0x000000, 0);
   renderer.domElement.style.width = '100%';
   renderer.domElement.style.height = '100%';
   renderer.domElement.style.display = 'block';
@@ -92,10 +115,11 @@ export function mountPet3D(container, { kind, petType, progress = 0 }) {
   if (kind === 'egg') {
     autoSpinGroup.add(buildEgg(petType, progress));
   } else {
-    autoSpinGroup.add(buildPet(petType));
+    autoSpinGroup.add(buildPet(petType, stage));
+    // Soft contact shadow on the floor so the pet feels grounded.
+    autoSpinGroup.add(buildShadowDisc());
   }
 
-  // Resize handling — the pet stage can shrink/grow on rotation.
   resizeObserver = new ResizeObserver(() => {
     if (!renderer || !camera || !containerEl) return;
     const w = containerEl.clientWidth, h = containerEl.clientHeight;
@@ -136,7 +160,6 @@ export function unmountPet3D() {
   containerEl = null;
 }
 
-// Bump the egg's crack stage live (called as kid waters/suns).
 export function setEggProgress(progress) {
   if (mode !== 'egg' || !eggMesh) return;
   const tex = makeEggTexture(progress);
@@ -145,7 +168,6 @@ export function setEggProgress(progress) {
   eggMesh.material.needsUpdate = true;
 }
 
-// Cute "wiggle" reaction when the pet is tapped — short scale-bounce.
 export function wigglePet3D() {
   if (!autoSpinGroup) return;
   const start = performance.now();
@@ -157,7 +179,6 @@ export function wigglePet3D() {
       autoSpinGroup.scale.set(1, 1, 1);
       return;
     }
-    // Bouncy scale + cheeky head-shake
     const s = 1 + 0.18 * Math.sin(t * Math.PI * 2) * (1 - t);
     autoSpinGroup.scale.set(s, s, s);
     autoSpinGroup.rotation.y = baseY + Math.sin(t * Math.PI * 4) * 0.25 * (1 - t);
@@ -173,10 +194,9 @@ function startRaf() {
     if (!renderer) return;
     raf = requestAnimationFrame(tick);
     if (autoSpinGroup && !isDragging) {
-      autoSpinGroup.rotation.y += 0.01;
+      autoSpinGroup.rotation.y += 0.008;
     }
     pulseT += 0.04;
-    // Subtle breathing for the pet body so it feels alive.
     if (autoSpinGroup && mode === 'pet') {
       const s = 1 + Math.sin(pulseT) * 0.02;
       autoSpinGroup.scale.set(s, s, s);
@@ -201,14 +221,12 @@ function bindDrag(dom) {
     dragRotY += dx * 0.01;
     dragRotX = Math.max(-1.0, Math.min(1.0, dragRotX + dy * 0.01));
     root.rotation.set(dragRotX, dragRotY, 0);
-    // Apply to the spin group's parent so auto-spin keeps adding on top.
-    autoSpinGroup.rotation.x = 0; // we drive X via root
+    autoSpinGroup.rotation.x = 0;
     lastX = e.clientX; lastY = e.clientY;
   });
   const stop = () => {
     if (!isDragging) return;
     isDragging = false;
-    // Resume auto-spin shortly so the kid sees their final pose first.
     resumeT = setTimeout(() => { isDragging = false; }, 1200);
   };
   dom.addEventListener('pointerup', stop);
@@ -216,50 +234,38 @@ function bindDrag(dom) {
   dom.addEventListener('pointerleave', stop);
 }
 
-// ---- egg geometry / texture ----
+// ---- egg geometry / texture (unchanged from v2) ----
 
 function buildEgg(petType, progress) {
   const look = PET_LOOK[petType] || PET_LOOK.duck;
   const geo = new THREE.SphereGeometry(1.05, 64, 64);
-  // Squash into egg shape: stretch Y, taper top.
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i);
     pos.setY(i, y * 1.32);
-    // Slight top taper
     const taper = 1 - Math.max(0, y) * 0.18;
     pos.setX(i, pos.getX(i) * taper);
     pos.setZ(i, pos.getZ(i) * taper);
   }
   geo.computeVertexNormals();
-
   const tex = makeEggTexture(progress, look.body, look.accent);
-  const mat = new THREE.MeshStandardMaterial({
-    map: tex,
-    roughness: 0.55,
-    metalness: 0.05,
-    color: 0xffffff,
-  });
+  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55, metalness: 0.05, color: 0xffffff });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.x = 0.06;
   eggMesh = mesh;
   return mesh;
 }
 
-// Draws the egg shell as a 2D canvas texture: base shell color, a few cute
-// dots, and procedural cracks whose count + length depend on `progress`.
 function makeEggTexture(progress, body = 0xfff2a0, accent = 0xff9bbb) {
   const c = document.createElement('canvas');
-  c.width = 1024; c.height = 512; // 2:1 for sphere wrap
+  c.width = 1024; c.height = 512;
   const ctx = c.getContext('2d');
-  // Base vertical gradient for shading
   const g = ctx.createLinearGradient(0, 0, 0, c.height);
   g.addColorStop(0, hexLighten(body, 0.18));
   g.addColorStop(0.5, hexToCss(body));
   g.addColorStop(1, hexLighten(body, -0.12));
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, c.width, c.height);
-  // Cute polka dots
   ctx.fillStyle = hexToCss(accent);
   const rng = mulberry32(42);
   for (let i = 0; i < 26; i++) {
@@ -270,9 +276,8 @@ function makeEggTexture(progress, body = 0xfff2a0, accent = 0xff9bbb) {
     ctx.ellipse(x, y, r, r * 0.85, 0, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Cracks — count and length scale with progress (0..1)
   const stage = Math.max(0, Math.min(4, Math.round(progress * 4)));
-  const crackCount = stage * 2; // 0,2,4,6,8 cracks
+  const crackCount = stage * 2;
   if (crackCount > 0) {
     const rng2 = mulberry32(99);
     ctx.strokeStyle = '#3a2a3a';
@@ -300,7 +305,6 @@ function makeEggTexture(progress, body = 0xfff2a0, accent = 0xff9bbb) {
       }
     }
     if (stage >= 4) {
-      // Final stage: a glowing "about to hatch" highlight
       const grad = ctx.createRadialGradient(c.width/2, c.height/2, 20, c.width/2, c.height/2, 220);
       grad.addColorStop(0, 'rgba(255,255,180,0.9)');
       grad.addColorStop(1, 'rgba(255,255,180,0)');
@@ -314,135 +318,494 @@ function makeEggTexture(progress, body = 0xfff2a0, accent = 0xff9bbb) {
   return tex;
 }
 
-// ---- pet meshes ----
+// ---- pet anatomy ----
 
-function buildPet(petType) {
+function buildPet(petType, stageName) {
   const look = PET_LOOK[petType] || PET_LOOK.duck;
-  const group = new THREE.Group();
+  const stage = STAGE_PARAMS[stageName] || STAGE_PARAMS.young;
+  const root = new THREE.Group();
 
-  const body = sphere(1.0, look.body);
-  body.scale.set(1, 0.95, 1);
-  group.add(body);
-
-  // Belly / accent patch (front)
-  const belly = sphere(0.7, hexLighten(look.body, 0.18));
-  belly.scale.set(1, 0.85, 0.6);
-  belly.position.set(0, -0.05, 0.55);
-  group.add(belly);
-
-  // Eyes — two small white spheres with darker pupils
-  const eyeL = sphere(0.16, 0xffffff); eyeL.position.set(-0.32, 0.28, 0.85);
-  const eyeR = sphere(0.16, 0xffffff); eyeR.position.set( 0.32, 0.28, 0.85);
-  const pupL = sphere(0.07, 0x222233); pupL.position.set(-0.30, 0.27, 0.97);
-  const pupR = sphere(0.07, 0x222233); pupR.position.set( 0.30, 0.27, 0.97);
-  group.add(eyeL, eyeR, pupL, pupR);
-
-  // Cheek blush
-  const blushL = sphere(0.10, 0xffaac4); blushL.position.set(-0.55, 0.05, 0.7); blushL.scale.set(1, 0.6, 0.4);
-  const blushR = sphere(0.10, 0xffaac4); blushR.position.set( 0.55, 0.05, 0.7); blushR.scale.set(1, 0.6, 0.4);
-  group.add(blushL, blushR);
-
-  // Per-species accessories
   switch (look.kind) {
-    case 'duck':
-      // beak (cone) + tail
-      group.add(orientCone(0.18, 0.35, look.accent, [0, -0.05, 0.95], [Math.PI/2, 0, 0]));
-      group.add(sphereAt(0.2, look.body, [0, 0, -0.95]));
-      break;
-    case 'dino': {
-      // back spikes
-      for (let i = -1; i <= 1; i++) {
-        group.add(orientCone(0.15, 0.32, look.accent, [0, 0.85, i * 0.45], [0, 0, 0]));
-      }
-      // little arms
-      group.add(sphereAt(0.18, look.body, [-0.85, -0.1, 0.25]));
-      group.add(sphereAt(0.18, look.body, [ 0.85, -0.1, 0.25]));
-      break;
-    }
-    case 'panda': {
-      group.add(sphereAt(0.28, look.accent, [-0.6, 0.7, 0.3])); // ear L
-      group.add(sphereAt(0.28, look.accent, [ 0.6, 0.7, 0.3])); // ear R
-      // panda eye patches
-      const patchL = sphere(0.22, look.accent); patchL.position.set(-0.32, 0.3, 0.75); patchL.scale.set(1,1.1,0.6);
-      const patchR = sphere(0.22, look.accent); patchR.position.set( 0.32, 0.3, 0.75); patchR.scale.set(1,1.1,0.6);
-      group.add(patchL, patchR);
-      break;
-    }
-    case 'sheep': {
-      // fluff balls all over
-      const rng = mulberry32(7);
-      for (let i = 0; i < 24; i++) {
-        const u = rng() * Math.PI * 2;
-        const v = (rng() - 0.5) * Math.PI * 0.9;
-        const r = 1.02;
-        const x = Math.cos(u) * Math.cos(v) * r;
-        const y = Math.sin(v) * r * 0.95;
-        const z = Math.sin(u) * Math.cos(v) * r;
-        if (z < -0.1) continue; // skip hidden side
-        group.add(sphereAt(0.18 + rng() * 0.06, hexLighten(look.body, 0.1), [x, y, z]));
-      }
-      // ears
-      group.add(sphereAt(0.14, look.accent, [-0.5, 0.7, 0.3]));
-      group.add(sphereAt(0.14, look.accent, [ 0.5, 0.7, 0.3]));
-      break;
-    }
-    case 'bear': {
-      group.add(sphereAt(0.24, look.body, [-0.6, 0.7, 0.25])); // ears
-      group.add(sphereAt(0.24, look.body, [ 0.6, 0.7, 0.25]));
-      group.add(sphereAt(0.16, hexLighten(look.body, -0.15), [-0.6, 0.7, 0.35]));
-      group.add(sphereAt(0.16, hexLighten(look.body, -0.15), [ 0.6, 0.7, 0.35]));
-      // muzzle
-      const muzzle = sphere(0.32, hexLighten(look.body, 0.15)); muzzle.position.set(0, 0, 0.85); muzzle.scale.set(1, 0.7, 0.6);
-      group.add(muzzle);
-      group.add(sphereAt(0.07, 0x222222, [0, 0.05, 1.05])); // nose
-      break;
-    }
-    case 'bunny': {
-      // long ears
-      const earGeo = new THREE.CapsuleGeometry(0.13, 0.8, 4, 12);
-      const earMat = new THREE.MeshStandardMaterial({ color: look.body, roughness: 0.7 });
-      const earL = new THREE.Mesh(earGeo, earMat);
-      earL.position.set(-0.32, 1.2, 0.1); earL.rotation.z = 0.18;
-      const earR = earL.clone(); earR.position.x = 0.32; earR.rotation.z = -0.18;
-      group.add(earL, earR);
-      // Inner pink ear strips
-      const innerGeo = new THREE.CapsuleGeometry(0.07, 0.6, 4, 8);
-      const innerMat = new THREE.MeshStandardMaterial({ color: look.accent, roughness: 0.7 });
-      const innerL = new THREE.Mesh(innerGeo, innerMat); innerL.position.set(-0.30, 1.18, 0.18); innerL.rotation.z = 0.18;
-      const innerR = innerL.clone(); innerR.position.x = 0.30; innerR.rotation.z = -0.18;
-      group.add(innerL, innerR);
-      group.add(sphereAt(0.18, hexLighten(look.body, 0.12), [0, -0.7, -0.95])); // tail puff
-      break;
-    }
-    case 'crab': {
-      // claws
-      group.add(sphereAt(0.32, look.body, [-1.05, -0.2, 0.4]));
-      group.add(sphereAt(0.32, look.body, [ 1.05, -0.2, 0.4]));
-      // eye-stalks
-      group.add(orientCone(0.06, 0.45, look.body, [-0.18, 0.85, 0.7], [0, 0, 0]));
-      group.add(orientCone(0.06, 0.45, look.body, [ 0.18, 0.85, 0.7], [0, 0, 0]));
-      group.add(sphereAt(0.14, 0x222222, [-0.18, 1.12, 0.7]));
-      group.add(sphereAt(0.14, 0x222222, [ 0.18, 1.12, 0.7]));
-      break;
-    }
-    case 'bird': {
-      // wings
-      const wingGeo = new THREE.SphereGeometry(0.5, 24, 16);
-      const wingMat = new THREE.MeshStandardMaterial({ color: hexLighten(look.body, -0.1), roughness: 0.7 });
-      const wL = new THREE.Mesh(wingGeo, wingMat); wL.position.set(-0.85, 0, 0); wL.scale.set(0.5, 0.9, 0.5);
-      const wR = wL.clone(); wR.position.x = 0.85;
-      group.add(wL, wR);
-      group.add(orientCone(0.16, 0.32, look.accent, [0, 0, 0.95], [Math.PI/2, 0, 0]));
-      // head crest
-      group.add(orientCone(0.08, 0.25, look.accent, [0, 0.95, 0.2], [0, 0, 0]));
-      break;
-    }
+    case 'duck':  buildDuck(root, look, stage);  break;
+    case 'dino':  buildDino(root, look, stage);  break;
+    case 'panda': buildPanda(root, look, stage); break;
+    case 'sheep': buildSheep(root, look, stage); break;
+    case 'bear':  buildBear(root, look, stage);  break;
+    case 'bunny': buildBunny(root, look, stage); break;
+    case 'crab':  buildCrab(root, look, stage);  break;
+    case 'bird':  buildBird(root, look, stage);  break;
+    default:      buildBunny(root, look, stage);
   }
 
-  return group;
+  // Apply overall stage scale (anatomy details already used per-stage params).
+  root.scale.set(stage.scale, stage.scale, stage.scale);
+  // Lift the whole creature so it sits above the shadow disc at y = -1.05.
+  root.position.y = 0;
+  return root;
 }
 
-// ---- mesh helpers ----
+// ---------- per-species builders ----------
+
+function buildDuck(g, look, st) {
+  const br = st.bodyRatio;
+  const bodyRX = 0.85*br, bodyRY = 0.7*br, bodyRZ = 1.0*br;
+  const bodyCY = -0.05;
+  const body = ellipsoid(bodyRX, bodyRY, bodyRZ, look.body);
+  body.position.y = bodyCY;
+  g.add(body);
+  const belly = ellipsoid(0.6*br, 0.4*br, 0.7*br, hexLighten(look.body, 0.22));
+  belly.position.set(0, bodyCY - 0.3*br, 0.35*br);
+  g.add(belly);
+
+  // Head with neck — sit clearly on top of body
+  const headR = 0.42 * st.headRatio;
+  const headY = bodyCY + bodyRY + headR * 0.5 + st.headLift;
+  const headZ = 0.35 * br;
+  const head = sphere(headR, look.body);
+  head.position.set(0, headY, headZ);
+  g.add(head);
+
+  // Beak: flat orange wedge protruding from head front
+  const beak = box(0.32, 0.12, 0.28, look.accent);
+  beak.position.set(0, headY - headR*0.1, headZ + headR + 0.1);
+  g.add(beak);
+  const beakLip = box(0.28, 0.05, 0.18, hexLighten(look.accent, -0.12));
+  beakLip.position.set(0, headY - headR*0.18, headZ + headR + 0.1);
+  g.add(beakLip);
+
+  addEyes(g, [headR*0.6, headY + headR*0.1, headZ + headR*0.6], st.eyeRatio, 0.16);
+
+  // Wings tucked along sides
+  const wL = ellipsoid(0.4*br, 0.55*br, 0.18*br, hexLighten(look.body, -0.08));
+  wL.position.set(-bodyRX*0.85, 0.05, 0.0);
+  g.add(wL);
+  const wR = wL.clone(); wR.position.x = bodyRX*0.85; g.add(wR);
+
+  // Webbed feet
+  const footL = box(0.22, 0.06, 0.32, look.accent);
+  footL.position.set(-0.25, bodyCY - bodyRY - 0.05, 0.25);
+  g.add(footL);
+  const footR = footL.clone(); footR.position.x = 0.25; g.add(footR);
+
+  // Tail tuft
+  g.add(sphereAt(0.18, look.body, [0, bodyCY + 0.05, -bodyRZ - 0.05]));
+
+  // Adult: head crest
+  if (st.extras) {
+    const crest = cone(0.07, 0.18, look.accent);
+    crest.position.set(0, headY + headR + 0.1, headZ - 0.05);
+    g.add(crest);
+  }
+}
+
+function buildDino(g, look, st) {
+  // T-Rex-ish: pear body, long tail, thick legs, big head on stubby neck,
+  // tiny arms, dorsal spike row.
+  const br = st.bodyRatio;
+  const bodyRX = 0.7*br, bodyRY = 0.85*br, bodyRZ = 0.95*br;
+  const bodyCY = -0.05;
+  const body = ellipsoid(bodyRX, bodyRY, bodyRZ, look.body);
+  body.position.y = bodyCY;
+  g.add(body);
+  const belly = ellipsoid(0.45*br, 0.5*br, 0.55*br, hexLighten(look.body, 0.18));
+  belly.position.set(0, bodyCY - 0.2*br, 0.45*br);
+  g.add(belly);
+
+  // Neck + head — head sits clearly above body
+  const headR = 0.5 * st.headRatio;
+  const headY = bodyCY + bodyRY + headR * 0.55 + st.headLift;
+  const headZ = 0.6 * br;
+  const neck = ellipsoid(0.32*st.limbLen, 0.45*st.limbLen, 0.32*st.limbLen, look.body);
+  neck.position.set(0, bodyCY + bodyRY + 0.1, 0.35*br);
+  g.add(neck);
+  const head = sphere(headR, look.body);
+  head.position.set(0, headY, headZ);
+  g.add(head);
+  // Snout protruding forward
+  const snout = ellipsoid(0.32, 0.22, 0.4, hexLighten(look.body, -0.08));
+  snout.position.set(0, headY - headR*0.2, headZ + headR*0.7);
+  g.add(snout);
+  // Teeth row
+  const teeth = box(0.4, 0.06, 0.05, 0xffffff);
+  teeth.position.set(0, headY - headR*0.45, headZ + headR*0.95);
+  g.add(teeth);
+
+  // Eyes
+  addEyes(g, [headR*0.5, headY + headR*0.15, headZ + headR*0.7], st.eyeRatio, 0.18);
+
+  // Tiny T-Rex arms
+  const armL = ellipsoid(0.1, 0.2, 0.1, look.body);
+  armL.position.set(-bodyRX - 0.05, 0.0, 0.5*br);
+  g.add(armL);
+  const armR = armL.clone(); armR.position.x = bodyRX + 0.05; g.add(armR);
+
+  // Thick legs
+  const legR = 0.22 * st.limbLen;
+  const legH = 0.5 * st.limbLen;
+  const legGeo = new THREE.CylinderGeometry(legR, legR*1.2, legH, 16);
+  const legMat = new THREE.MeshStandardMaterial({ color: look.body, roughness:0.6 });
+  const legY = bodyCY - bodyRY * 0.85;
+  const legL = new THREE.Mesh(legGeo, legMat); legL.position.set(-0.4, legY, 0.15); g.add(legL);
+  const legRm = new THREE.Mesh(legGeo, legMat); legRm.position.set(0.4, legY, 0.15); g.add(legRm);
+  // Feet
+  const footY = legY - legH*0.5 - 0.05;
+  const footL = ellipsoid(0.28, 0.12, 0.36, look.accent);
+  footL.position.set(-0.4, footY, 0.22);
+  g.add(footL);
+  const footR = footL.clone(); footR.position.x = 0.4; g.add(footR);
+
+  // Long tapering tail
+  const tailSegs = 4;
+  for (let i = 1; i <= tailSegs; i++) {
+    const r = 0.32 - i*0.06;
+    const seg = sphere(Math.max(0.1, r), look.body);
+    seg.position.set(0, bodyCY - 0.05 + i*0.04, -bodyRZ - i*0.4);
+    g.add(seg);
+  }
+
+  // Dorsal spike row
+  const spikeBase = st.extras ? 0.22 : 0.12;
+  const spikeH = st.extras ? 0.5 : 0.25;
+  for (let i = -2; i <= 2; i++) {
+    const sp = cone(spikeBase, spikeH, look.accent);
+    sp.position.set(0, bodyCY + bodyRY * 0.8, i * 0.3);
+    g.add(sp);
+  }
+}
+
+function buildPanda(g, look, st) {
+  const br = st.bodyRatio;
+  const bodyRX = 0.95*br, bodyRY = 0.85*br, bodyRZ = 0.85*br;
+  const bodyCY = -0.1;
+  const body = ellipsoid(bodyRX, bodyRY, bodyRZ, look.body);
+  body.position.y = bodyCY;
+  g.add(body);
+  const saddle = ellipsoid(bodyRX*1.02, 0.25*br, bodyRZ*1.02, look.accent);
+  saddle.position.y = bodyCY + 0.15*br;
+  g.add(saddle);
+
+  const headR = 0.65 * st.headRatio;
+  const headY = bodyCY + bodyRY + headR * 0.4 + st.headLift;
+  const headZ = 0.3 * br;
+  const head = sphere(headR, look.body);
+  head.position.set(0, headY, headZ);
+  g.add(head);
+
+  const earL = ellipsoid(0.18, 0.22, 0.14, look.accent);
+  earL.position.set(-headR*0.75, headY + headR*0.85, headZ);
+  g.add(earL);
+  const earR = earL.clone(); earR.position.x = headR*0.75; g.add(earR);
+
+  const patchL = ellipsoid(0.18, 0.22, 0.06, look.accent);
+  patchL.position.set(-headR*0.35, headY + headR*0.15, headZ + headR*0.85);
+  patchL.rotation.z = 0.25;
+  g.add(patchL);
+  const patchR = patchL.clone(); patchR.position.x = headR*0.35; patchR.rotation.z = -0.25; g.add(patchR);
+  addEyes(g, [headR*0.35, headY + headR*0.18, headZ + headR*1.0], st.eyeRatio*0.7, 0.1);
+  g.add(sphereAt(0.08, look.accent, [0, headY - headR*0.2, headZ + headR + 0.05]));
+
+  const limbR = 0.22;
+  const limbH = 0.36 * st.limbLen;
+  const armGeo = new THREE.CylinderGeometry(limbR, limbR, limbH, 16);
+  const limbMat = new THREE.MeshStandardMaterial({ color: look.accent, roughness:0.6 });
+  const armL = new THREE.Mesh(armGeo, limbMat); armL.position.set(-bodyRX-0.05, 0.0, 0.4*br); armL.rotation.z = 0.4; g.add(armL);
+  const armR = new THREE.Mesh(armGeo, limbMat); armR.position.set(bodyRX+0.05, 0.0, 0.4*br); armR.rotation.z = -0.4; g.add(armR);
+  const legY = bodyCY - bodyRY * 0.7;
+  const legL = new THREE.Mesh(armGeo, limbMat); legL.position.set(-0.45*br, legY, -0.1*br); g.add(legL);
+  const legR = new THREE.Mesh(armGeo, limbMat); legR.position.set(0.45*br, legY, -0.1*br); g.add(legR);
+}
+
+function buildSheep(g, look, st) {
+  // Cloud body — many small spheres
+  const br = st.bodyRatio;
+  const cloudCount = st.extras ? 36 : 26;
+  const cloudR = 0.95 * br;
+  const rng = mulberry32(7);
+  for (let i = 0; i < cloudCount; i++) {
+    const u = rng() * Math.PI * 2;
+    const v = (rng() - 0.5) * Math.PI * 0.95;
+    const x = Math.cos(u) * Math.cos(v) * cloudR;
+    const y = Math.sin(v) * cloudR * 0.95 - 0.05;
+    const z = Math.sin(u) * Math.cos(v) * cloudR;
+    if (z < -0.25*br) continue;
+    g.add(sphereAt(0.18 + rng() * 0.06, hexLighten(look.body, 0.05), [x, y, z]));
+  }
+
+  // Face on front
+  const headR = 0.4 * st.headRatio;
+  const faceY = 0.15 + st.headLift * 0.5;
+  const faceZ = cloudR + 0.05;
+  const face = sphere(headR, look.accent);
+  face.position.set(0, faceY, faceZ);
+  g.add(face);
+  // Dark muzzle (forward of face)
+  const muzzle = ellipsoid(0.18, 0.12, 0.18, look.dark);
+  muzzle.position.set(0, faceY - headR*0.3, faceZ + headR*0.6);
+  g.add(muzzle);
+  addEyes(g, [headR*0.55, faceY + headR*0.15, faceZ + headR*0.5], st.eyeRatio*0.7, 0.12);
+  // Floppy ears
+  const earL = ellipsoid(0.18, 0.08, 0.08, look.accent);
+  earL.position.set(-headR - 0.1, faceY + headR*0.35, faceZ - 0.1); earL.rotation.z = 0.4; g.add(earL);
+  const earR = earL.clone(); earR.position.x = headR + 0.1; earR.rotation.z = -0.4; g.add(earR);
+
+  // Thin black legs (4 short)
+  const legR = 0.08;
+  const legH = 0.4 * st.limbLen;
+  const legMat = new THREE.MeshStandardMaterial({ color: look.dark, roughness:0.6 });
+  const legGeo = new THREE.CylinderGeometry(legR, legR, legH, 12);
+  const legY = -cloudR + 0.1;
+  [[-0.4*br,legY,0.45*br],[0.4*br,legY,0.45*br],[-0.4*br,legY,-0.4*br],[0.4*br,legY,-0.4*br]].forEach(p => {
+    const l = new THREE.Mesh(legGeo, legMat); l.position.set(p[0], p[1], p[2]); g.add(l);
+  });
+
+  // Adult sheep: small curly horns
+  if (st.extras) {
+    const hornGeo = new THREE.TorusGeometry(0.13, 0.05, 8, 14, Math.PI*1.4);
+    const hornMat = new THREE.MeshStandardMaterial({ color: 0xddc28a, roughness:0.6 });
+    const hL = new THREE.Mesh(hornGeo, hornMat);
+    hL.position.set(-headR*0.6, faceY + headR*0.85, faceZ - 0.05); hL.rotation.set(0.3, 0, 0.6); g.add(hL);
+    const hR = new THREE.Mesh(hornGeo, hornMat);
+    hR.position.set(headR*0.6, faceY + headR*0.85, faceZ - 0.05); hR.rotation.set(0.3, 0, -0.6); g.add(hR);
+  }
+}
+
+function buildBear(g, look, st) {
+  const br = st.bodyRatio;
+  const bodyRX = 0.9*br, bodyRY = 0.95*br, bodyRZ = 0.85*br;
+  const bodyCY = -0.1;
+  const body = ellipsoid(bodyRX, bodyRY, bodyRZ, look.body);
+  body.position.y = bodyCY;
+  g.add(body);
+  const belly = ellipsoid(0.55*br, 0.55*br, 0.5*br, hexLighten(look.body, 0.18));
+  belly.position.set(0, bodyCY - 0.1*br, 0.55*br);
+  g.add(belly);
+
+  const headR = 0.62 * st.headRatio;
+  const headY = bodyCY + bodyRY + headR * 0.45 + st.headLift;
+  const headZ = 0.3 * br;
+  const head = sphere(headR, look.body);
+  head.position.set(0, headY, headZ);
+  g.add(head);
+
+  const earL = sphere(0.22, look.body); earL.position.set(-headR*0.7, headY + headR*0.85, headZ-0.05); g.add(earL);
+  const earR = earL.clone(); earR.position.x = headR*0.7; g.add(earR);
+  const innerL = sphere(0.13, hexLighten(look.body, -0.18)); innerL.position.set(-headR*0.7, headY + headR*0.85, headZ + 0.1); g.add(innerL);
+  const innerR = innerL.clone(); innerR.position.x = headR*0.7; g.add(innerR);
+
+  const muzzle = ellipsoid(0.34, 0.26, 0.32, hexLighten(look.body, 0.15));
+  muzzle.position.set(0, headY - headR*0.3, headZ + headR*0.85);
+  g.add(muzzle);
+  g.add(sphereAt(0.08, 0x222222, [0, headY - headR*0.2, headZ + headR + 0.15]));
+  addEyes(g, [headR*0.4, headY + headR*0.2, headZ + headR*0.7], st.eyeRatio*0.85, 0.16);
+
+  const limbR = 0.22;
+  const limbH = 0.42 * st.limbLen;
+  const limbMat = new THREE.MeshStandardMaterial({ color: hexLighten(look.body, -0.08), roughness:0.6 });
+  const limbGeo = new THREE.CylinderGeometry(limbR, limbR*0.9, limbH, 16);
+  const aL = new THREE.Mesh(limbGeo, limbMat); aL.position.set(-bodyRX-0.05, -0.05, 0.45*br); aL.rotation.z = 0.5; g.add(aL);
+  const aR = new THREE.Mesh(limbGeo, limbMat); aR.position.set(bodyRX+0.05, -0.05, 0.45*br); aR.rotation.z = -0.5; g.add(aR);
+  const legY = bodyCY - bodyRY * 0.85;
+  const lL = new THREE.Mesh(limbGeo, limbMat); lL.position.set(-0.4, legY, 0.0); g.add(lL);
+  const lR = new THREE.Mesh(limbGeo, limbMat); lR.position.set(0.4, legY, 0.0); g.add(lR);
+  const padY = legY - limbH*0.5 - 0.05;
+  [[-0.4,padY,0],[0.4,padY,0]].forEach(p => g.add(sphereAt(0.16, hexLighten(look.body, -0.18), p)));
+}
+
+function buildBunny(g, look, st) {
+  // Body: small round (bodyRatio shrinks for chubby-baby look).
+  const br = st.bodyRatio;
+  const bodyRX = 0.7 * br, bodyRY = 0.75 * br, bodyRZ = 0.75 * br;
+  const bodyCY = -0.05 * br;
+  const body = ellipsoid(bodyRX, bodyRY, bodyRZ, look.body);
+  body.position.y = bodyCY;
+  g.add(body);
+  const belly = ellipsoid(0.42*br, 0.45*br, 0.4*br, hexLighten(look.body, 0.18));
+  belly.position.set(0, bodyCY - 0.17*br, 0.5*br);
+  g.add(belly);
+
+  // Head — sits on top of body. Y is computed so head bottom always clears
+  // body top by `headLift`, regardless of headRatio.
+  const headR = 0.55 * st.headRatio;
+  const headY = bodyCY + bodyRY + headR * 0.55 + st.headLift;
+  const head = sphere(headR, look.body);
+  head.position.set(0, headY, 0.3 * br);
+  g.add(head);
+
+  // LONG ears — capsules. Baby = short stubs, Young = medium, Adult = long upright.
+  const earLen = 0.55 * (st.extras ? 1.3 : st.scale < 0.95 ? 0.55 : 1.0);
+  const earR = 0.12;
+  const earY = headY + headR * 0.95 + earLen * 0.4;
+  const earGeo = new THREE.CapsuleGeometry(earR, earLen, 6, 14);
+  const earMat = new THREE.MeshStandardMaterial({ color: look.body, roughness: 0.7 });
+  const eL = new THREE.Mesh(earGeo, earMat);
+  eL.position.set(-0.25, earY, 0.18);
+  eL.rotation.z = st.extras ? 0.05 : 0.18;
+  g.add(eL);
+  const eR = eL.clone(); eR.position.x = 0.25; eR.rotation.z = -eL.rotation.z; g.add(eR);
+  const innerGeo = new THREE.CapsuleGeometry(earR*0.55, earLen*0.85, 4, 10);
+  const innerMat = new THREE.MeshStandardMaterial({ color: look.accent, roughness: 0.7 });
+  const iL = new THREE.Mesh(innerGeo, innerMat); iL.position.set(-0.25, earY, 0.27); iL.rotation.z = eL.rotation.z; g.add(iL);
+  const iR = iL.clone(); iR.position.x = 0.25; iR.rotation.z = -iL.rotation.z; g.add(iR);
+
+  // Eyes (big & shiny for baby) — positioned on the head front
+  addEyes(g, [headR*0.4, headY + headR*0.1, headR*0.85], st.eyeRatio*0.95, 0.22);
+  // Pink nose triangle (tiny inverted cone)
+  const nose = cone(0.08, 0.08, look.accent);
+  nose.position.set(0, headY - headR*0.25, headR*0.95);
+  nose.rotation.x = Math.PI;
+  g.add(nose);
+  // Mouth dot
+  g.add(sphereAt(0.04, look.dark, [0, headY - headR*0.45, headR*0.95]));
+
+  // Legs: short front + bigger back legs (limbLen scales with stage)
+  const frontGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.28*st.limbLen, 12);
+  const backGeo  = new THREE.CapsuleGeometry(0.18, 0.16*st.limbLen, 4, 10);
+  const limbMat = new THREE.MeshStandardMaterial({ color: look.body, roughness:0.7 });
+  const legY = bodyCY - bodyRY * 0.7;
+  const fL = new THREE.Mesh(frontGeo, limbMat); fL.position.set(-0.35*br, legY, 0.45*br); g.add(fL);
+  const fR = new THREE.Mesh(frontGeo, limbMat); fR.position.set(0.35*br, legY, 0.45*br); g.add(fR);
+  const bL = new THREE.Mesh(backGeo, limbMat);  bL.position.set(-0.4*br, legY, -0.2*br); bL.rotation.z = 1.4; g.add(bL);
+  const bR = new THREE.Mesh(backGeo, limbMat);  bR.position.set(0.4*br, legY, -0.2*br);  bR.rotation.z = 1.4; g.add(bR);
+
+  // Cotton-ball tail
+  g.add(sphereAt(0.24, hexLighten(look.body, 0.15), [0, bodyCY - 0.05, -bodyRZ - 0.1]));
+}
+
+function buildCrab(g, look, st) {
+  // Flat oval body
+  const body = ellipsoid(1.05, 0.45, 0.85, look.body);
+  body.position.y = -0.15;
+  g.add(body);
+  // Belly underside
+  const belly = ellipsoid(0.85, 0.18, 0.65, hexLighten(look.body, 0.18));
+  belly.position.set(0, -0.4, 0);
+  g.add(belly);
+
+  // Eye-stalks: short cylinders going up + black eyeballs
+  const stalkGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.32, 10);
+  const stalkMat = new THREE.MeshStandardMaterial({ color: look.body, roughness:0.6 });
+  const sL = new THREE.Mesh(stalkGeo, stalkMat); sL.position.set(-0.2, 0.35, 0.55); g.add(sL);
+  const sR = new THREE.Mesh(stalkGeo, stalkMat); sR.position.set(0.2, 0.35, 0.55); g.add(sR);
+  // Eyeballs
+  g.add(sphereAt(0.13, 0xffffff, [-0.2, 0.55, 0.55]));
+  g.add(sphereAt(0.13, 0xffffff, [0.2, 0.55, 0.55]));
+  g.add(sphereAt(0.07, 0x222233, [-0.2, 0.58, 0.65]));
+  g.add(sphereAt(0.07, 0x222233, [0.2, 0.58, 0.65]));
+  // Smile
+  for (let i = -1; i <= 1; i++) g.add(sphereAt(0.04, look.dark, [i*0.08, 0.05, 0.78]));
+
+  // Pincers: spheres + claws (open if adult)
+  const pincerR = st.extras ? 0.36 : 0.28;
+  const pinL = sphere(pincerR, look.body); pinL.position.set(-1.1, -0.05, 0.3); g.add(pinL);
+  const pinR = sphere(pincerR, look.body); pinR.position.set(1.1, -0.05, 0.3); g.add(pinR);
+  // Claw tips (cones pointing forward)
+  g.add(orientCone(pincerR*0.6, 0.4, look.body, [-1.3, 0.05, 0.5], [Math.PI/2, 0, Math.PI/4]));
+  g.add(orientCone(pincerR*0.6, 0.4, look.body, [1.3, 0.05, 0.5], [Math.PI/2, 0, -Math.PI/4]));
+  // Claw arms (short cylinders)
+  const armGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.4, 12);
+  const armMat = new THREE.MeshStandardMaterial({ color: look.body, roughness:0.6 });
+  const armL = new THREE.Mesh(armGeo, armMat); armL.position.set(-0.7, -0.1, 0.3); armL.rotation.z = Math.PI/2; g.add(armL);
+  const armR = new THREE.Mesh(armGeo, armMat); armR.position.set(0.7, -0.1, 0.3); armR.rotation.z = Math.PI/2; g.add(armR);
+
+  // 6 walking legs (3 each side, segmented)
+  const legGeo = new THREE.CapsuleGeometry(0.07, 0.32 * st.limbLen, 4, 8);
+  const legMat = new THREE.MeshStandardMaterial({ color: look.dark, roughness:0.6 });
+  for (let i = 0; i < 3; i++) {
+    const z = 0.1 - i * 0.4;
+    const lL = new THREE.Mesh(legGeo, legMat); lL.position.set(-0.95, -0.4, z); lL.rotation.z = Math.PI/2 + 0.3; g.add(lL);
+    const lR = new THREE.Mesh(legGeo, legMat); lR.position.set(0.95, -0.4, z);  lR.rotation.z = -Math.PI/2 - 0.3; g.add(lR);
+  }
+}
+
+function buildBird(g, look, st) {
+  const br = st.bodyRatio;
+  const bodyRX = 0.7*br, bodyRY = 0.78*br, bodyRZ = 0.78*br;
+  const bodyCY = -0.08;
+  const body = ellipsoid(bodyRX, bodyRY, bodyRZ, look.body);
+  body.position.y = bodyCY;
+  g.add(body);
+  const belly = ellipsoid(0.45*br, 0.5*br, 0.45*br, hexLighten(look.body, 0.22));
+  belly.position.set(0, bodyCY - 0.1*br, 0.45*br);
+  g.add(belly);
+
+  const headR = 0.45 * st.headRatio;
+  const headY = bodyCY + bodyRY + headR * 0.45 + st.headLift;
+  const headZ = 0.25 * br;
+  const head = sphere(headR, look.body);
+  head.position.set(0, headY, headZ);
+  g.add(head);
+  const beak = cone(0.13, 0.28, look.accent);
+  beak.position.set(0, headY - headR*0.15, headZ + headR + 0.05);
+  beak.rotation.x = Math.PI/2;
+  g.add(beak);
+  addEyes(g, [headR*0.5, headY + headR*0.2, headZ + headR*0.65], st.eyeRatio*0.85, 0.13);
+
+  const wingGeo = new THREE.SphereGeometry(0.45, 24, 16);
+  const wingMat = new THREE.MeshStandardMaterial({ color: hexLighten(look.body, -0.1), roughness:0.7 });
+  const wL = new THREE.Mesh(wingGeo, wingMat); wL.position.set(-bodyRX-0.05, 0.0, -0.05); wL.scale.set(0.45, 0.95, 0.6); g.add(wL);
+  const wR = wL.clone(); wR.position.x = bodyRX+0.05; g.add(wR);
+
+  for (let i = -1; i <= 1; i++) {
+    const f = box(0.18, 0.06, 0.4, hexLighten(look.body, -0.12));
+    f.position.set(i*0.18, bodyCY - 0.05, -bodyRZ - 0.1);
+    f.rotation.z = i*0.3;
+    g.add(f);
+  }
+
+  const legGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.22*st.limbLen, 10);
+  const legMat = new THREE.MeshStandardMaterial({ color: look.accent, roughness:0.6 });
+  const legY = bodyCY - bodyRY * 0.7;
+  const lL = new THREE.Mesh(legGeo, legMat); lL.position.set(-0.18, legY, 0.15); g.add(lL);
+  const lR = new THREE.Mesh(legGeo, legMat); lR.position.set(0.18, legY, 0.15); g.add(lR);
+  const footY = legY - 0.13;
+  g.add(ellipsoidAt(0.12, 0.04, 0.15, look.accent, [-0.18, footY, 0.22]));
+  g.add(ellipsoidAt(0.12, 0.04, 0.15, look.accent, [0.18, footY, 0.22]));
+
+  if (st.extras) {
+    const crest = cone(0.1, 0.32, look.accent);
+    crest.position.set(0, headY + headR + 0.18, headZ - 0.07);
+    g.add(crest);
+  }
+}
+
+// ---- shared helpers (eyes, ground, geom factories) ----
+
+// Adds a symmetrical pair of cute white-eye + black-pupil at +/- offsetX of the
+// same y/z. Eye size uses base * eyeRatio so baby pets get the big-eye treatment.
+function addEyes(g, posOffsets, eyeRatio, baseR) {
+  const [ox, y, z] = posOffsets;
+  const eyeR = baseR * eyeRatio;
+  const pupR = eyeR * 0.5;
+  g.add(sphereAt(eyeR, 0xffffff, [-ox, y, z]));
+  g.add(sphereAt(eyeR, 0xffffff, [ ox, y, z]));
+  g.add(sphereAt(pupR, 0x222233, [-ox, y, z + eyeR*0.55]));
+  g.add(sphereAt(pupR, 0x222233, [ ox, y, z + eyeR*0.55]));
+  // Cheek blush
+  g.add(ellipsoidAt(eyeR*0.7, eyeR*0.45, eyeR*0.3, 0xffaac4, [-ox - eyeR*0.6, y - eyeR*0.6, z - eyeR*0.1]));
+  g.add(ellipsoidAt(eyeR*0.7, eyeR*0.45, eyeR*0.3, 0xffaac4, [ ox + eyeR*0.6, y - eyeR*0.6, z - eyeR*0.1]));
+}
+
+// Soft contact shadow under the pet. A flat dark disc with a radial gradient
+// alpha texture, parallel to the floor at y = -1.05.
+function buildShadowDisc() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(128, 128, 20, 128, 128, 120);
+  grad.addColorStop(0, 'rgba(60,40,80,0.55)');
+  grad.addColorStop(1, 'rgba(60,40,80,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(128, 128, 120, 0, Math.PI*2); ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+  const geo = new THREE.PlaneGeometry(2.6, 2.6);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI/2;
+  mesh.position.y = -1.05;
+  return mesh;
+}
+
+// ---- mesh / geometry factories ----
 
 function sphere(r, color) {
   return new THREE.Mesh(
@@ -453,14 +816,33 @@ function sphere(r, color) {
 function sphereAt(r, color, pos) {
   const m = sphere(r, color); m.position.set(pos[0], pos[1], pos[2]); return m;
 }
-function orientCone(r, h, color, pos, rot) {
-  const m = new THREE.Mesh(
+function ellipsoid(rx, ry, rz, color) {
+  const m = sphere(1, color);
+  m.scale.set(rx, ry, rz);
+  return m;
+}
+function ellipsoidAt(rx, ry, rz, color, pos) {
+  const m = ellipsoid(rx, ry, rz, color);
+  m.position.set(pos[0], pos[1], pos[2]);
+  return m;
+}
+function cone(r, h, color) {
+  return new THREE.Mesh(
     new THREE.ConeGeometry(r, h, 24),
     new THREE.MeshStandardMaterial({ color, roughness: 0.55 }),
   );
+}
+function orientCone(r, h, color, pos, rot) {
+  const m = cone(r, h, color);
   m.position.set(pos[0], pos[1], pos[2]);
   m.rotation.set(rot[0], rot[1], rot[2]);
   return m;
+}
+function box(w, h, d, color) {
+  return new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.55 }),
+  );
 }
 
 // ---- color utils ----
@@ -469,7 +851,6 @@ function hexToCss(h) {
   return '#' + h.toString(16).padStart(6, '0');
 }
 function hexLighten(h, amt) {
-  // amt: -1..1
   const r = (h >> 16) & 0xff, g = (h >> 8) & 0xff, b = h & 0xff;
   const f = amt >= 0 ? (v) => Math.round(v + (255 - v) * amt) : (v) => Math.round(v * (1 + amt));
   const rr = Math.max(0, Math.min(255, f(r)));

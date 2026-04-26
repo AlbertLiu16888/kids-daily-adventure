@@ -150,3 +150,24 @@ export function petDayIndex(pet) {
   const b = new Date(today() + 'T00:00:00');
   return Math.max(0, Math.round((b - a) / 86400000));
 }
+
+// Growth stage based on days-since-hatch + friendship. Used by pet3d.js to
+// pick anatomy parameters (size, head:body ratio, leg length, etc.) and by
+// app.js to label the stage in the UI.
+//
+// 'baby'   — chubby kawaii proportions, oversized head & eyes, small limbs
+// 'young'  — balanced proportions
+// 'adult'  — full-grown with mature features (horns / longer ears / spikes)
+//
+// Returns one of those three strings.
+export function petStage(pet) {
+  if (!pet) return 'baby';
+  const days = petDayIndex(pet);
+  const fr = pet.friendship || 1;
+  if (days >= 10 || fr >= 8) return 'adult';
+  if (days >= 3  || fr >= 4) return 'young';
+  return 'baby';
+}
+
+// User-facing zh label for the stage.
+export const STAGE_LABEL = { baby:'幼兒', young:'少年', adult:'成體' };
