@@ -9,7 +9,7 @@
 // 'kda_pets__wangwang'. Each write also kicks off a cloud push.
 
 import { nsKey, getActiveProfile } from './profile.js';
-import { schedulePush } from './cloud.js';
+import { schedulePush, markLocalDirty } from './cloud.js';
 
 const K_EGGS = 'kda_eggs';
 const K_PETS = 'kda_pets';
@@ -37,7 +37,10 @@ function read(baseKey, fallback) {
 function write(baseKey, value) {
   localStorage.setItem(nsKey(baseKey), JSON.stringify(value));
   const a = getActiveProfile();
-  if (a) schedulePush(a.id);
+  if (a) {
+    markLocalDirty(a.id);
+    schedulePush(a.id);
+  }
 }
 
 // 0..1 progress toward hatch — used to draw cracks on the egg shell.
@@ -117,6 +120,27 @@ export function interactPet(petId) {
     write(K_PETS, pets);
   }
   return { ok:true, pet:p, isNewDay };
+}
+
+// One-shot seeder: if this profile has zero pets AND has never been seeded,
+// drop in the starter pet (仙貝 → 兔子, 旺旺龍 → 恐龍). The "seeded" flag is
+// stored *namespaced* so each profile gets its own starter exactly once, even
+// if the kid later releases the pet manually.
+//
+// Returns the new pet id when a pet is seeded, otherwise null.
+export function seedStarterPetOnce(petType) {
+  if (!petType) return null;
+  const SEED_KEY = 'kda_starter_seeded';
+  const flagKey = nsKey(SEED_KEY);
+  if (localStorage.getItem(flagKey)) return null;
+  // Mark BEFORE writing the pet so a crash mid-write doesn't double-seed.
+  localStorage.setItem(flagKey, '1');
+  const pets = getPets();
+  const dayKey = today();
+  const petId = `p${Date.now().toString(36)}${Math.floor(Math.random()*1000)}`;
+  pets[petId] = { type: petType, hatchedAt: dayKey, friendship: 3, lastInteract: dayKey };
+  write(K_PETS, pets);
+  return petId;
 }
 
 // How many days since hatching (for dialog index).

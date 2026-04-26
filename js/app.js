@@ -9,18 +9,56 @@ import {
 import { makeDraggable } from './drag.js';
 import {
   sfxTap, sfxSuccess, sfxCandy, sfxCuckoo,
-  startBgm, stopBgm, speak,
+  startBgm, stopBgm, speak, speakEn, sfxAnimal, petTalk,
 } from './audio.js';
 import { hapTap, hapSuccess, hapCandy } from './haptics.js';
 import { TASK_DIALOG, PET_DAILY, dialogFor } from './dialogs.js';
 import {
   PET_META, HATCH_NEEDS,
   getEggs, getPets, addEgg, interactEgg, interactPet, petDayIndex,
-  eggCrackStage,
+  eggCrackStage, seedStarterPetOnce,
 } from './pets.js';
 import { PROFILES, getActiveProfile, setActiveProfile } from './profile.js';
-import { pullProfile, flushPush, onSyncChange } from './cloud.js';
+import { pullProfile, flushPush, onSyncChange, markLocalDirty, restoreSnapshot } from './cloud.js';
 import { mountPet3D, unmountPet3D, wigglePet3D, setEggProgress } from './pet3d.js';
+
+// =============================================================================
+// Schema migration scaffold.
+// Bump SCHEMA_VERSION and add a branch under runMigrations() whenever the
+// localStorage shape changes (key rename, value reshape, etc.). Old data is
+// transformed in place rather than discarded — this is the contract that lets
+// us ship updates without ever wiping a kid's progress.
+// =============================================================================
+const SCHEMA_VERSION = 1;
+const SCHEMA_KEY = 'kda.schema.version';
+
+function runMigrations() {
+  let stored = 0;
+  try { stored = parseInt(localStorage.getItem(SCHEMA_KEY) || '0', 10) || 0; } catch {}
+  if (stored === SCHEMA_VERSION) return;
+  // v1 is the current baseline — no transformations needed for any pre-v1
+  // localStorage shape (we just stamp the version so future migrations have
+  // a starting point).
+  // Future example:
+  //   if (stored < 2) migrateRenameCandies();
+  try { localStorage.setItem(SCHEMA_KEY, String(SCHEMA_VERSION)); } catch {}
+}
+runMigrations();
+
+// Expose a manual recovery hook for the (rare) case where a cloud-pull
+// overwrites local data the parent didn't expect. Open the console and call
+// `kdaRestoreSnapshot()` to roll back to the pre-pull snapshot for the
+// currently active profile.
+if (typeof window !== 'undefined') {
+  window.kdaRestoreSnapshot = () => {
+    const a = getActiveProfile();
+    if (!a) { console.warn('[kda] no active profile — open the app and pick a kid first'); return; }
+    const r = restoreSnapshot(a.id);
+    console.log('[kda] restoreSnapshot result:', r);
+    if (r.ok) console.log('[kda] reload the page to see restored state');
+    return r;
+  };
+}
 
 // --- Helpers ---
 function $(sel, root=document) { return root.querySelector(sel); }
@@ -72,9 +110,18 @@ $$('#splash-chars .char-card').forEach(card => {
     setActiveProfile(id);
     // Pull cloud snapshot before letting them in
     await pullProfile(id);
+    // Seed the profile's starter pet if this is their first time (or if cloud
+    // also has no pets). Runs AFTER pull so we never seed on top of cloud data.
+    const seededId = seedStarterPetOnce(PROFILES[id].starterPet);
     $('#start-btn').disabled = false;
-    $('#splash-hint').textContent = `${PROFILES[id].name} 準備好了！按 🎈 開始`;
-    speak(`${PROFILES[id].name}你好！按開始冒險就可以出發了`);
+    if (seededId) {
+      const meta = PET_META[PROFILES[id].starterPet];
+      $('#splash-hint').textContent = `${PROFILES[id].name}！${meta.name} 已經在小窩等你了 🪺`;
+      petTalk(PROFILES[id].starterPet, `${PROFILES[id].name}你好！我是你的${meta.name}，去小窩看看我吧`);
+    } else {
+      $('#splash-hint').textContent = `${PROFILES[id].name} 準備好了！按 🎈 開始`;
+      speak(`${PROFILES[id].name}你好！按開始冒險就可以出發了`);
+    }
   });
 });
 
@@ -88,6 +135,9 @@ $$('#splash-chars .char-card').forEach(card => {
     $('#start-btn').disabled = true;
     $('#splash-hint').textContent = `${a.name}，正在讀取雲端紀錄…`;
     pullProfile(a.id).then(() => {
+      // Seed starter pet if missing (handles returning kids who haven't been
+      // seeded yet — e.g. brand-new install with old cloud data).
+      seedStarterPetOnce(a.starterPet);
       $('#start-btn').disabled = false;
       $('#splash-hint').textContent = `${a.name} 準備好了！按 🎈 開始`;
     });
@@ -170,7 +220,9 @@ function renderMap() {
     btn.style.left = pos.x + '%';
     btn.style.top = pos.y + '%';
     btn.setAttribute('aria-label', loc.name);
-    const allDone = loc.tasks.every(t => done.includes(t.id));
+    // Only check today's picked subset, not the full pool.
+    const todaysPicks = pickDailyTasks(loc);
+    const allDone = todaysPicks.every(t => done.includes(t.id));
     const claimed = hasClaimedDailyReward(loc.id);
     if (allDone) btn.classList.add('done');
     if (claimed) btn.classList.add('claimed');
@@ -271,9 +323,52 @@ $('#back-from-bp').addEventListener('click', () => {
 let currentLoc = null;
 let currentTask = null;
 let progress = 0;
+// Today's randomly-picked 3 tasks for currentLoc (deterministic per date+user).
+let currentLocTasks = [];
+
+// --- Daily task rotation ---
+// Each location now has 5+ task variants. We pick 3 for today using a simple
+// FNV-1a hash of "<userId>|<YYYY-MM-DD>|<locId>" as the seed for a Mulberry32
+// PRNG. Same kid + same day + same location → same 3 picks (so refreshing the
+// page mid-day doesn't re-shuffle and lose progress on the current set), but
+// the line-up rotates across days.
+function fnv1a(s) {
+  let h = 2166136261 >>> 0;
+  for (let i=0;i<s.length;i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function mulberry32(seed) {
+  let t = seed >>> 0;
+  return function() {
+    t = (t + 0x6D2B79F5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function todayDateStr() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+function pickDailyTasks(loc, count = 3) {
+  if (!loc?.tasks?.length) return [];
+  if (loc.tasks.length <= count) return loc.tasks.slice();
+  const userId = getActiveProfile()?.id || 'sanbei';
+  const seed = fnv1a(`${userId}|${todayDateStr()}|${loc.id}`);
+  const rand = mulberry32(seed);
+  // Fisher-Yates over indices, then take first `count`.
+  const idx = loc.tasks.map((_, i) => i);
+  for (let i = idx.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [idx[i], idx[j]] = [idx[j], idx[i]];
+  }
+  return idx.slice(0, count).map(i => loc.tasks[i]);
+}
 
 function enterLocation(locId) {
   currentLoc = findLocation(locId);
+  currentLocTasks = pickDailyTasks(currentLoc);
   currentTask = null;
   progress = 0;
   $('#scene').classList.remove('preview-mode');
@@ -309,21 +404,21 @@ function enterLocation(locId) {
   };
   img.src = currentLoc.bg;
 
-  // Replay mode: if every task here is already done today AND the daily reward
-  // has been claimed, reset the location's tasks so the kid can replay and
-  // earn 飼料.
+  // Replay mode: if every (picked) task here is already done today AND the
+  // daily reward has been claimed, reset just this location's picked tasks so
+  // the kid can replay and earn 飼料.
   {
     const done0 = getDoneToday();
-    const allDone = currentLoc.tasks.every(t => done0.includes(t.id));
+    const allDone = currentLocTasks.every(t => done0.includes(t.id));
     if (allDone && hasClaimedDailyReward(currentLoc.id)) {
-      resetTasksForReplay(currentLoc.tasks.map(t => t.id));
+      resetTasksForReplay(currentLocTasks.map(t => t.id));
     }
   }
 
   renderTaskList();
-  // Auto-pick first undone task
+  // Auto-pick first undone task (from today's picks)
   const done = getDoneToday();
-  const next = currentLoc.tasks.find(t => !done.includes(t.id));
+  const next = currentLocTasks.find(t => !done.includes(t.id));
   if (next) selectTask(next.id);
   else {
     $('#prop-tray').innerHTML = '<div style="margin:auto;font-weight:800;color:#8a7a98">今天全部任務都完成囉！🎉</div>';
@@ -339,7 +434,7 @@ function renderTaskList() {
   list.innerHTML = '';
   const done = getDoneToday();
   let doneCount = 0;
-  currentLoc.tasks.forEach(t => {
+  currentLocTasks.forEach(t => {
     const card = document.createElement('button');
     card.className = 'task-card';
     if (done.includes(t.id)) { card.classList.add('done'); doneCount++; }
@@ -355,7 +450,7 @@ function renderTaskList() {
     });
     list.appendChild(card);
   });
-  $('#scene-progress').textContent = `${doneCount} / ${currentLoc.tasks.length}`;
+  $('#scene-progress').textContent = `${doneCount} / ${currentLocTasks.length}`;
 }
 
 function selectTask(taskId) {
@@ -371,20 +466,28 @@ function selectTask(taskId) {
 function renderStage() {
   const stage = $('#scene-stage');
   stage.innerHTML = '';
+  const isLetter = currentTask.educational === 'letter';
 
   currentTask.targets.forEach(t => {
     const el = document.createElement('div');
     el.className = 'drop-target';
+    if (isLetter) el.classList.add('letter-target');
     el.dataset.accepts = t.accepts;
     el.dataset.targetId = t.id;
+    if (isLetter) el.dataset.letter = t.label || '';
     el.style.left = `calc(${t.x}% - 60px)`;
     el.style.top = `calc(${t.y}% - 60px)`;
-    el.innerHTML = t.img
-      ? `<img src="${t.img}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{style:'font-size:72px',textContent:'${t.emoji}'}))" />`
-      : `<span style="font-size:72px">${t.emoji}</span>`;
+    if (isLetter) {
+      // Big letter card (not an animal)
+      el.innerHTML = `<span style="font-size:72px;font-weight:900;color:#6a4f9a;font-family:Comic Sans MS,Chalkboard,sans-serif">${t.label || '?'}</span>`;
+    } else {
+      el.innerHTML = t.img
+        ? `<img src="${t.img}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{style:'font-size:72px',textContent:'${t.emoji}'}))" />`
+        : `<span style="font-size:72px">${t.emoji}</span>`;
+    }
 
     // For touch-tap tasks (no drag), allow clicks too
-    if (['foot', 'step', 'clocktap'].includes(currentTask.prop.type)) {
+    if (['foot', 'step', 'clocktap', 'letter_tap'].includes(currentTask.prop.type)) {
       el.addEventListener('click', () => {
         handleHit(el);
       });
@@ -397,6 +500,21 @@ function renderStage() {
 function renderPropTray() {
   const tray = $('#prop-tray');
   tray.innerHTML = '';
+  // Letter task: show the target letter big in the tray as the "prop hint".
+  if (currentTask.prop.type === 'letter_tap') {
+    const p = currentTask.prop;
+    const hint = document.createElement('div');
+    hint.style.cssText = 'margin:auto;text-align:center;padding:0 20px;display:flex;flex-direction:column;align-items:center;gap:4px';
+    hint.innerHTML = `
+      <div style="font-size:14px;font-weight:800;color:#8a7a98">點對的字母 👇</div>
+      <div style="font-size:48px;font-weight:900;color:#ff6aa6;font-family:Comic Sans MS,Chalkboard,sans-serif">${p.target}</div>
+      <div style="font-size:14px;color:#6a4f9a">${p.target} = ${p.word}（${p.wordZh}）</div>
+    `;
+    tray.appendChild(hint);
+    // Speak the English letter + word once so kid hears the sound.
+    setTimeout(() => speakEn(`${p.target}. ${p.word}.`), 600);
+    return;
+  }
   // For tap-only tasks, show hint instead of draggable prop
   if (['foot', 'step', 'clocktap'].includes(currentTask.prop.type)) {
     const hint = document.createElement('div');
@@ -404,6 +522,13 @@ function renderPropTray() {
     hint.innerHTML = `👆 點擊畫面上的 ${currentTask.targets[0].emoji}<br/>需要 ${currentTask.needs} 次`;
     tray.appendChild(hint);
     return;
+  }
+  // Counting task: show the goal count up front in the tray as a teaching cue.
+  if (currentTask.educational === 'count') {
+    const head = document.createElement('div');
+    head.style.cssText = 'flex-basis:100%;text-align:center;margin:0 0 6px;font-weight:800;color:#6a4f9a;font-size:16px';
+    head.innerHTML = `🔢 一起數到 <b style="color:#ff6aa6;font-size:22px">${currentTask.needs}</b> ${currentTask.countLabel || ''}！`;
+    tray.appendChild(head);
   }
   // Spawn multiple props for multi-needs tasks so kid can drag repeatedly
   for (let i = 0; i < Math.max(1, currentTask.needs); i++) {
@@ -431,6 +556,24 @@ function spawnProp() {
 }
 
 function handleHit(targetEl) {
+  // Letter task: validate the tapped letter matches the prop's target.
+  // A wrong tap doesn't count as progress — gentle re-prompt instead.
+  if (currentTask.educational === 'letter') {
+    const want = currentTask.prop.target;
+    const got = targetEl.dataset.letter || '';
+    if (got !== want) {
+      // Wrong: shake + nudge voice, no progress.
+      hapTap();
+      targetEl.classList.remove('wrong');
+      void targetEl.offsetWidth;
+      targetEl.classList.add('wrong');
+      setTimeout(() => targetEl.classList.remove('wrong'), 600);
+      speak(`再試試看，找 ${want}`);
+      setTimeout(() => speakEn(want), 700);
+      return;
+    }
+  }
+
   sfxSuccess(); hapSuccess();
   targetEl.classList.remove('happy');
   void targetEl.offsetWidth;
@@ -452,9 +595,21 @@ function handleHit(targetEl) {
   if (currentTask.prop.type === 'clocktap') sfxCuckoo();
 
   progress++;
+
+  // Counting task: speak "1, 2, 3…" each successful drop so the kid hears
+  // the count grow. Bilingual: 中文 first, 英文 second for phonics exposure.
+  if (currentTask.educational === 'count') {
+    const NUM_ZH = ['一','二','三','四','五','六','七','八','九','十'];
+    const NUM_EN = ['One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten'];
+    const idx = Math.min(progress, NUM_ZH.length) - 1;
+    const label = currentTask.countLabel || '';
+    speak(`${NUM_ZH[idx]}${label}`);
+    setTimeout(() => speakEn(NUM_EN[idx]), 380);
+  }
+
   if (progress >= currentTask.needs) {
     completeTask();
-  } else {
+  } else if (currentTask.educational !== 'count') {
     const line = dialogFor(currentTask.id, progress, currentTask.needs);
     if (line) speak(line);
   }
@@ -467,12 +622,12 @@ function completeTask() {
   renderTaskList();
 
   const done = getDoneToday();
-  const allDone = currentLoc.tasks.every(t => done.includes(t.id));
+  const allDone = currentLocTasks.every(t => done.includes(t.id));
   if (allDone) {
     setTimeout(() => giveReward(), 800);
   } else {
     setTimeout(() => {
-      const next = currentLoc.tasks.find(t => !done.includes(t.id));
+      const next = currentLocTasks.find(t => !done.includes(t.id));
       if (next) selectTask(next.id);
     }, 1200);
   }
@@ -745,7 +900,8 @@ function petWiggle() {
         stage.appendChild(sp);
         setTimeout(() => sp.remove(), 1000);
       });
-      speak(`${meta.name}咕咕～好開心`);
+      // Animal call → spoken line
+      petTalk(p.type, `${meta.name}好開心，你也跟我玩玩看`);
     }
   } else {
     sfxTap(); hapTap();
@@ -790,7 +946,8 @@ function openPetView(id) {
   const { pet, isNewDay } = interactPet(id);
   const dayIdx = petDayIndex(pet);
   const dailyLine = PET_DAILY[dayIdx % PET_DAILY.length];
-  setTimeout(() => speak(dailyLine), 400);
+  // Play the animal's call right away, then speak the greeting
+  setTimeout(() => petTalk(p.type, dailyLine), 400);
   renderPetInfo();
   renderPetActions();
   bindStageTap();
@@ -841,7 +998,7 @@ function renderPetActions() {
       const stage = $('#pet-stage');
       stage.appendChild(tick);
       setTimeout(()=>tick.remove(), 1000);
-      speak(`${meta.name}喵嗚～好舒服`);
+      petTalk(p.type, `${meta.name}最喜歡你摸摸了`);
     });
 
     // Feed button — only enabled if the kid has feed in inventory.
@@ -862,11 +1019,16 @@ function renderPetActions() {
       const pets = getPets();
       pets[viewId].friendship = Math.min(10, (pets[viewId].friendship || 1) + 1);
       // We can't directly write through pets.js helpers, but interactPet will
-      // re-save on next call. For now, persist via a manual write.
+      // re-save on next call. For now, persist via a manual write — and
+      // markLocalDirty so the next pull treats local as newer than cloud
+      // (otherwise the friendship bump could be silently overwritten on
+      // re-select).
       try {
-        const stored = JSON.parse(localStorage.getItem(`kda_pets__${getActiveProfile().id}`)) || {};
+        const aid = getActiveProfile().id;
+        const stored = JSON.parse(localStorage.getItem(`kda_pets__${aid}`)) || {};
         stored[viewId] = pets[viewId];
-        localStorage.setItem(`kda_pets__${getActiveProfile().id}`, JSON.stringify(stored));
+        localStorage.setItem(`kda_pets__${aid}`, JSON.stringify(stored));
+        markLocalDirty(aid);
       } catch {}
       wigglePet3D();
       // Floating food particles
@@ -878,7 +1040,7 @@ function renderPetActions() {
         stage.appendChild(sp);
         setTimeout(() => sp.remove(), 1000);
       });
-      speak(`${meta.name}吃得好開心，我們更親密了`);
+      petTalk(p.type, `${meta.name}吃得好開心，我們更親密了`);
       renderPetInfo();
       renderPetActions();
       renderFeedChip();

@@ -7,9 +7,33 @@
 //
 // Settings (bgm / sfx / voice / vibration) intentionally stay device-local
 // — different devices may have different audio/haptic preferences.
+//
+// =============================================================================
+// CANONICAL localStorage KEY CATALOG (do NOT rename without writing a migration)
+// =============================================================================
+// Profile-namespaced (suffix __sanbei / __wangwang), synced to cloud:
+//   kda_candies          — { color → count }
+//   kda_eggs             — { eggId → { type, water, sun, createdAt } }
+//   kda_pets             — { petId → { type, hatchedAt, friendship, lastInteract } }
+//   kda_pets_daily       — { 'YYYY-MM-DD:eggId:kind' → count }   (egg interaction limiter)
+//   kda_feed             — number, pet-feed inventory
+//   kda_daily_rewards    — { 'YYYY-MM-DD' → { locId → true } }
+//
+// Profile-namespaced, NOT synced (per-day, self-prunes):
+//   kda_daily_YYYY-MM-DD — array of completed task ids for that calendar day
+//
+// Profile-namespaced sync bookkeeping (managed by cloud.js):
+//   kda_local_updated_at — ISO timestamp of last local mutation
+//   kda_local_snapshot   — pre-pull snapshot of all synced keys (recovery)
+//
+// Device-local (NOT namespaced, NOT synced):
+//   kda_active_profile   — last selected profile id
+//   kda_settings         — { bgm, sfx, voice, vibration }
+//   kda.schema.version   — integer, for future migrations (see app.js)
+// =============================================================================
 
 import { nsKey, getActiveProfile } from './profile.js';
-import { schedulePush } from './cloud.js';
+import { schedulePush, markLocalDirty } from './cloud.js';
 
 const K_CANDIES        = 'kda_candies';
 const K_SETTINGS       = 'kda_settings';   // device-local, not namespaced
@@ -18,7 +42,12 @@ const K_DAILY_REWARDS  = 'kda_daily_rewards'; // record of which locations claim
 
 function syncAfterWrite() {
   const a = getActiveProfile();
-  if (a) schedulePush(a.id);
+  if (!a) return;
+  // Stamp the local-dirty timestamp BEFORE scheduling the push so a
+  // subsequent pullProfile call (e.g. profile re-select) can compare it
+  // against the cloud's _updatedAt and decide whether local is newer.
+  markLocalDirty(a.id);
+  schedulePush(a.id);
 }
 
 function read(baseKey, fallback) {

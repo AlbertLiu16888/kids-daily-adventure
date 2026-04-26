@@ -3,8 +3,8 @@
 // a stable id used as a key in the cloud blob.
 
 export const PROFILES = {
-  sanbei:   { id: 'sanbei',   name: '仙貝',   gender: 'girl', age: 3.5, avatar: 'assets/images/animals/char_sanbei.png',   emoji: '👧', color: '#ff8ec0' },
-  wangwang: { id: 'wangwang', name: '旺旺龍', gender: 'boy',  age: 2,   avatar: 'assets/images/animals/char_wangwang.png', emoji: '👦', color: '#9dd6ff' },
+  sanbei:   { id: 'sanbei',   name: '仙貝',   gender: 'girl', age: 3.5, avatar: 'assets/images/animals/char_sanbei.png',   emoji: '👧', color: '#ff8ec0', starterPet: 'bunny' },
+  wangwang: { id: 'wangwang', name: '旺旺龍', gender: 'boy',  age: 2,   avatar: 'assets/images/animals/char_wangwang.png', emoji: '👦', color: '#9dd6ff', starterPet: 'dino'  },
 };
 
 const K_ACTIVE = 'kda_active_profile';

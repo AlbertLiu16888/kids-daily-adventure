@@ -766,6 +766,26 @@ body {
   100% { transform: scale(1); }
 }
 
+/* Letter task: targets are big rounded white cards with one bold uppercase
+   letter inside, sized to match the existing drop-target footprint. */
+.drop-target.letter-target {
+  background: #fff;
+  border: 4px dashed #ffb6d8;
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 12px rgba(0,0,0,.10);
+}
+.drop-target.letter-target.wrong { animation: shake .5s ease; border-color: #ff7a7a; }
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  20% { transform: translateX(-10px) rotate(-3deg); }
+  40% { transform: translateX(10px) rotate(3deg); }
+  60% { transform: translateX(-8px) rotate(-2deg); }
+  80% { transform: translateX(8px) rotate(2deg); }
+}
+
 .sparkle {
   position: absolute;
   font-size: 32px;

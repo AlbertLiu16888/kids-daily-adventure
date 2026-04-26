@@ -4,9 +4,20 @@
 //   prompt (first voice, spoken when task starts),
 //   dialog: { start, midEach, midLast, end }  // continuity thread
 //   prop { type, emoji, img }
-//   targets [{ id, emoji, img, x, y, accepts }]
+//   targets [{ id, emoji, img, x, y, accepts, label? }]
 //   needs  (how many successful drops to complete)
+//   educational?  'letter' | 'count'
+//     - 'letter': prop.type === 'letter_tap'. Targets carry a `label` letter.
+//                 Only the target whose label === prop.target counts as a hit;
+//                 wrong taps gently re-prompt. needs is always 1.
+//     - 'count':  voice says the next count number ("一", "二", "三"…) on each
+//                 successful drop, reinforcing the idea of counting items.
+//
 // Each location has `eggType` that may drop on full completion.
+//
+// v3 expansion: each location now has 5+ tasks; a deterministic per-day RNG in
+// app.js (pickDailyTasks) selects 3 of them for today, so the rotation feels
+// fresh without any day-to-day server state.
 
 export const LOCATIONS = [
   {
@@ -57,6 +68,37 @@ export const LOCATIONS = [
         ],
         needs: 2,
       },
+      // v3: 字母小教室 — D for Duck
+      {
+        id: 'qingtang_letter_d',
+        label: 'ABC 找鴨鴨',
+        emoji: '🔤',
+        prompt: '聽好喔，找出 D，D 是 Duck 鴨鴨！',
+        success: '答對了！D 就是 Duck，鴨鴨！',
+        prop: { type:'letter_tap', target:'D', word:'Duck', wordZh:'鴨鴨', emoji:'👆', img:null },
+        targets: [
+          { id:'l1', label:'A', x:25, y:50, accepts:'letter_tap' },
+          { id:'l2', label:'D', x:50, y:50, accepts:'letter_tap' },
+          { id:'l3', label:'F', x:75, y:50, accepts:'letter_tap' },
+        ],
+        needs: 1,
+        educational: 'letter',
+      },
+      // v3: 數一數 — 餵 4 條魚
+      {
+        id: 'qingtang_count_fish',
+        label: '數魚飼料',
+        emoji: '🔢',
+        prompt: '小魚有 4 條，每條都要餵到喔！',
+        success: '4 條魚都吃飽飽！',
+        prop: { type:'fishfood', emoji:'🐟', img:'assets/images/props/item_fishfood.png' },
+        targets: [
+          { id:'fish', emoji:'🐠', img:'assets/images/animals/animal_fish.png', x:50, y:65, accepts:'fishfood' },
+        ],
+        needs: 4,
+        educational: 'count',
+        countLabel: '條',
+      },
     ],
   },
   {
@@ -106,6 +148,37 @@ export const LOCATIONS = [
         ],
         needs: 1,
       },
+      // v3: 字母 — A for Apple
+      {
+        id: 'kg_letter_a',
+        label: 'ABC 找蘋果',
+        emoji: '🍎',
+        prompt: '今天教 A，A 是 Apple 蘋果！點 A 試試看～',
+        success: '很棒！A 是 Apple 蘋果！',
+        prop: { type:'letter_tap', target:'A', word:'Apple', wordZh:'蘋果', emoji:'👆', img:null },
+        targets: [
+          { id:'l1', label:'B', x:25, y:50, accepts:'letter_tap' },
+          { id:'l2', label:'A', x:50, y:50, accepts:'letter_tap' },
+          { id:'l3', label:'M', x:75, y:50, accepts:'letter_tap' },
+        ],
+        needs: 1,
+        educational: 'letter',
+      },
+      // v3: 數一數 — 5 顆糖
+      {
+        id: 'kg_count_candy',
+        label: '數糖果',
+        emoji: '🔢',
+        prompt: '小朋友想要 5 顆糖，數對才能拿到喔！',
+        success: '5 顆全到位，老師很高興！',
+        prop: { type:'candy_drop', emoji:'🍬', img:null },
+        targets: [
+          { id:'jar', emoji:'🫙', x:50, y:55, accepts:'candy_drop' },
+        ],
+        needs: 5,
+        educational: 'count',
+        countLabel: '顆',
+      },
     ],
   },
   {
@@ -154,6 +227,37 @@ export const LOCATIONS = [
           { id:'toybox', emoji:'📦', x:70, y:60, accepts:'toy' },
         ],
         needs: 3,
+      },
+      // v3: 字母 — B for Bottle
+      {
+        id: 'ny_letter_b',
+        label: 'ABC 找奶瓶',
+        emoji: '🍼',
+        prompt: 'B 是 Bottle 奶瓶喔，找 B！',
+        success: '答對！B 是 Bottle 奶瓶！',
+        prop: { type:'letter_tap', target:'B', word:'Bottle', wordZh:'奶瓶', emoji:'👆', img:null },
+        targets: [
+          { id:'l1', label:'P', x:25, y:50, accepts:'letter_tap' },
+          { id:'l2', label:'B', x:50, y:50, accepts:'letter_tap' },
+          { id:'l3', label:'D', x:75, y:50, accepts:'letter_tap' },
+        ],
+        needs: 1,
+        educational: 'letter',
+      },
+      // v3: 數一數 — 3 塊積木
+      {
+        id: 'ny_count_block',
+        label: '數積木',
+        emoji: '🔢',
+        prompt: '老師說要 3 塊積木疊塔，一起數！',
+        success: '3 塊積木的塔好高！',
+        prop: { type:'toy', emoji:'🧱', img:'assets/images/props/item_toy_block.png' },
+        targets: [
+          { id:'tower', emoji:'🗼', x:50, y:60, accepts:'toy' },
+        ],
+        needs: 3,
+        educational: 'count',
+        countLabel: '塊',
       },
     ],
   },
@@ -206,6 +310,37 @@ export const LOCATIONS = [
         ],
         needs: 3,
       },
+      // v3: 字母 — C for Crab
+      {
+        id: 'beach_letter_c',
+        label: 'ABC 找螃蟹',
+        emoji: '🦀',
+        prompt: 'C 是 Crab 螃蟹！找 C 喔～',
+        success: 'C 就是 Crab 螃蟹！',
+        prop: { type:'letter_tap', target:'C', word:'Crab', wordZh:'螃蟹', emoji:'👆', img:null },
+        targets: [
+          { id:'l1', label:'O', x:25, y:50, accepts:'letter_tap' },
+          { id:'l2', label:'C', x:50, y:50, accepts:'letter_tap' },
+          { id:'l3', label:'E', x:75, y:50, accepts:'letter_tap' },
+        ],
+        needs: 1,
+        educational: 'letter',
+      },
+      // v3: 數一數 — 5 顆貝殼
+      {
+        id: 'beach_count_shell',
+        label: '撿 5 顆貝殼',
+        emoji: '🐚',
+        prompt: '海邊有貝殼，要撿 5 顆放進水桶喔！',
+        success: '5 顆漂亮貝殼收集完成！',
+        prop: { type:'shell', emoji:'🐚', img:null },
+        targets: [
+          { id:'bucket', emoji:'🪣', img:'assets/images/props/item_waterbucket.png', x:50, y:65, accepts:'shell' },
+        ],
+        needs: 5,
+        educational: 'count',
+        countLabel: '顆',
+      },
     ],
   },
   {
@@ -257,6 +392,37 @@ export const LOCATIONS = [
         ],
         needs: 3,
       },
+      // v3: 字母 — T for T-Rex
+      {
+        id: 'dino_letter_t',
+        label: 'ABC 找暴龍',
+        emoji: '🦖',
+        prompt: 'T 是 T-Rex 暴龍喔，按 T！',
+        success: '答對！T-Rex 是大暴龍！',
+        prop: { type:'letter_tap', target:'T', word:'T-Rex', wordZh:'暴龍', emoji:'👆', img:null },
+        targets: [
+          { id:'l1', label:'L', x:25, y:50, accepts:'letter_tap' },
+          { id:'l2', label:'X', x:50, y:50, accepts:'letter_tap' },
+          { id:'l3', label:'T', x:75, y:50, accepts:'letter_tap' },
+        ],
+        needs: 1,
+        educational: 'letter',
+      },
+      // v3: 數一數 — 4 顆恐龍蛋
+      {
+        id: 'dino_count_eggs',
+        label: '撿 4 顆恐龍蛋',
+        emoji: '🥚',
+        prompt: '山洞裡有 4 顆恐龍蛋，一起數！',
+        success: '全部 4 顆都收集到！',
+        prop: { type:'dino_egg', emoji:'🥚', img:null },
+        targets: [
+          { id:'nest', emoji:'🪺', x:50, y:60, accepts:'dino_egg' },
+        ],
+        needs: 4,
+        educational: 'count',
+        countLabel: '顆',
+      },
     ],
   },
   {
@@ -305,6 +471,37 @@ export const LOCATIONS = [
           { id:'clock', emoji:'🕰', img:'assets/images/props/item_cuckoo_clock.png', x:50, y:40, accepts:'clocktap' },
         ],
         needs: 3,
+      },
+      // v3: 字母 — O for Office
+      {
+        id: 'office_letter_o',
+        label: 'ABC 找辦公室',
+        emoji: '🏢',
+        prompt: 'O 是 Office 辦公室喔，找 O！',
+        success: 'O 是 Office 辦公室！',
+        prop: { type:'letter_tap', target:'O', word:'Office', wordZh:'辦公室', emoji:'👆', img:null },
+        targets: [
+          { id:'l1', label:'Q', x:25, y:50, accepts:'letter_tap' },
+          { id:'l2', label:'O', x:50, y:50, accepts:'letter_tap' },
+          { id:'l3', label:'C', x:75, y:50, accepts:'letter_tap' },
+        ],
+        needs: 1,
+        educational: 'letter',
+      },
+      // v3: 數一數 — 5 份文件
+      {
+        id: 'office_count_paper',
+        label: '5 份文件',
+        emoji: '🔢',
+        prompt: '幫爸爸把 5 份文件放進文件夾！',
+        success: '5 份文件整理完成！',
+        prop: { type:'paper', emoji:'📄', img:null },
+        targets: [
+          { id:'folder', emoji:'📁', x:50, y:55, accepts:'paper' },
+        ],
+        needs: 5,
+        educational: 'count',
+        countLabel: '份',
       },
     ],
   },
@@ -356,6 +553,37 @@ export const LOCATIONS = [
         ],
         needs: 2,
       },
+      // v3: 字母 — P for Panda
+      {
+        id: 'zoo_letter_p',
+        label: 'ABC 找熊貓',
+        emoji: '🐼',
+        prompt: 'P 是 Panda 熊貓喔，找 P！',
+        success: 'P 就是 Panda 熊貓！',
+        prop: { type:'letter_tap', target:'P', word:'Panda', wordZh:'熊貓', emoji:'👆', img:null },
+        targets: [
+          { id:'l1', label:'B', x:25, y:50, accepts:'letter_tap' },
+          { id:'l2', label:'P', x:50, y:50, accepts:'letter_tap' },
+          { id:'l3', label:'R', x:75, y:50, accepts:'letter_tap' },
+        ],
+        needs: 1,
+        educational: 'letter',
+      },
+      // v3: 數一數 — 3 根香蕉
+      {
+        id: 'zoo_count_banana',
+        label: '猴子吃 3 根香蕉',
+        emoji: '🍌',
+        prompt: '猴子餓了，要 3 根香蕉，一起數喔！',
+        success: '3 根香蕉，猴子最開心！',
+        prop: { type:'banana', emoji:'🍌', img:null },
+        targets: [
+          { id:'monkey', emoji:'🐒', x:50, y:60, accepts:'banana' },
+        ],
+        needs: 3,
+        educational: 'count',
+        countLabel: '根',
+      },
     ],
   },
   // --- v2: 羊世界 ---
@@ -405,6 +633,37 @@ export const LOCATIONS = [
           { id:'capy', emoji:'🦫', img:'assets/images/animals/animal_capybara.png', x:75, y:65, accepts:'feed' },
         ],
         needs: 3,
+      },
+      // v3: 字母 — S for Sheep
+      {
+        id: 'sheep_letter_s',
+        label: 'ABC 找小羊',
+        emoji: '🐑',
+        prompt: 'S 是 Sheep 小羊喔，按 S！',
+        success: 'S 就是 Sheep 小羊！',
+        prop: { type:'letter_tap', target:'S', word:'Sheep', wordZh:'小羊', emoji:'👆', img:null },
+        targets: [
+          { id:'l1', label:'S', x:25, y:50, accepts:'letter_tap' },
+          { id:'l2', label:'Z', x:50, y:50, accepts:'letter_tap' },
+          { id:'l3', label:'N', x:75, y:50, accepts:'letter_tap' },
+        ],
+        needs: 1,
+        educational: 'letter',
+      },
+      // v3: 數一數 — 6 把牧草
+      {
+        id: 'sheep_count_grass',
+        label: '6 把牧草',
+        emoji: '🔢',
+        prompt: '羊群有點餓，要 6 把牧草，一起數！',
+        success: '6 把牧草，羊群好飽！',
+        prop: { type:'grass', emoji:'🌾', img:'assets/images/props/item_grass.png' },
+        targets: [
+          { id:'flock', emoji:'🐑', img:'assets/images/animals/animal_sheep.png', x:50, y:65, accepts:'grass' },
+        ],
+        needs: 6,
+        educational: 'count',
+        countLabel: '把',
       },
     ],
   },
